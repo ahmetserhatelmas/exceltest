@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useId, useMemo, useState, type ReactNode } from "react";
 import {
   Bar,
   BarChart,
@@ -14,6 +14,7 @@ import {
 import type { DashboardPayload } from "@/lib/dashboard";
 import {
   aggregate,
+  collectKaynakDepoSummary,
   filterRecords,
   statsForMonth,
 } from "@/lib/dashboard";
@@ -53,6 +54,8 @@ export default function Dashboard({ data }: Props) {
   const [mahalle, setMahalle] = useState<string>("");
   const [period, setPeriod] = useState<"toplam" | "aylik">("toplam");
   const [monthIndex, setMonthIndex] = useState(11);
+  /** Kaynak/depo paneli: ilk yüklemede açık, yer kazanmak için kapatılabilir */
+  const [kaynakPanelOpen, setKaynakPanelOpen] = useState(true);
 
   const mahalleOptions = useMemo(() => {
     if (!ilce) return [];
@@ -91,6 +94,11 @@ export default function Dashboard({ data }: Props) {
         tahakkuk: agg.monthly[i]?.tahakkuk ?? 0,
       })),
     [agg.monthly, data.months]
+  );
+
+  const kaynakOzeti = useMemo(
+    () => collectKaynakDepoSummary(filtered),
+    [filtered]
   );
 
   return (
@@ -199,6 +207,72 @@ export default function Dashboard({ data }: Props) {
       <p className="text-sm text-zinc-500 dark:text-zinc-500">
         Seçime göre <strong>{filtered.length}</strong> defter kaydı
       </p>
+
+      <section
+        className={`rounded-xl border p-4 text-sm ${
+          kaynakOzeti
+            ? "border-emerald-200 bg-emerald-50/80 dark:border-emerald-900/60 dark:bg-emerald-950/30"
+            : "border-zinc-200 bg-zinc-50/50 dark:border-zinc-800 dark:bg-zinc-900/40"
+        }`}
+      >
+        <button
+          type="button"
+          onClick={() => setKaynakPanelOpen((o) => !o)}
+          className="flex w-full items-center justify-between gap-3 rounded-lg text-left outline-none ring-emerald-500/40 transition hover:bg-black/[0.03] focus-visible:ring-2 dark:hover:bg-white/[0.04]"
+          aria-expanded={kaynakPanelOpen}
+          aria-controls="kaynak-depo-terfi-panel"
+          id="kaynak-depo-terfi-toggle"
+        >
+          <h2 className="text-base font-semibold text-zinc-900 dark:text-zinc-100">
+            Kaynak — depo — terfi
+          </h2>
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            viewBox="0 0 20 20"
+            fill="currentColor"
+            className={`h-5 w-5 shrink-0 text-emerald-600 transition-transform duration-200 dark:text-emerald-400 ${
+              kaynakPanelOpen ? "" : "-rotate-90"
+            }`}
+            aria-hidden
+          >
+            <path
+              fillRule="evenodd"
+              d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.94a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z"
+              clipRule="evenodd"
+            />
+          </svg>
+        </button>
+
+        <div
+          id="kaynak-depo-terfi-panel"
+          role="region"
+          aria-labelledby="kaynak-depo-terfi-toggle"
+          className={kaynakPanelOpen ? "mt-3" : "hidden"}
+        >
+          <p className="mb-3 text-xs text-zinc-500 dark:text-zinc-500">
+            Veri.xlsx, <strong>KAYNAK-TERFİ-DEPO</strong> sayfası; seçili
+            ilçe/mahalle defterleriyle eşleşen adlar (benzersiz liste).
+          </p>
+          {kaynakOzeti ? (
+            <div className="flex flex-col gap-3 text-zinc-800 dark:text-zinc-200">
+              {kaynakOzeti.depo ? (
+                <OzetiBlock label="Depo adı" text={kaynakOzeti.depo} />
+              ) : null}
+              {kaynakOzeti.kaynak ? (
+                <OzetiBlock label="Kaynak adı" text={kaynakOzeti.kaynak} />
+              ) : null}
+              {kaynakOzeti.terfi ? (
+                <OzetiBlock label="İçme suyu terfi" text={kaynakOzeti.terfi} />
+              ) : null}
+            </div>
+          ) : (
+            <p className="text-zinc-500 dark:text-zinc-500">
+              Bu seçim için KAYNAK-TERFİ-DEPO eşleşmesi yok (mahalle/ilçe adı
+              tabloda farklı yazılmış olabilir).
+            </p>
+          )}
+        </div>
+      </section>
 
       <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
         <KpiCard
@@ -327,6 +401,91 @@ export default function Dashboard({ data }: Props) {
           </ResponsiveContainer>
         </ChartCard>
       </section>
+    </div>
+  );
+}
+
+function splitOzetiItems(text: string): string[] {
+  return text
+    .split(";")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+}
+
+function OzetiBlock({ label, text }: { label: string; text: string }) {
+  const searchId = useId();
+  const [query, setQuery] = useState("");
+  const items = useMemo(() => splitOzetiItems(text), [text]);
+  const filtered = useMemo(() => {
+    const q = query.trim().toLocaleLowerCase("tr-TR");
+    if (!q) return items;
+    return items.filter((item) =>
+      item.toLocaleLowerCase("tr-TR").includes(q)
+    );
+  }, [items, query]);
+
+  useEffect(() => {
+    setQuery("");
+  }, [text]);
+
+  return (
+    <div>
+      <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-emerald-800 dark:text-emerald-300">
+        {label}
+        {items.length > 0 ? (
+          <span className="ml-2 font-normal normal-case text-zinc-500 dark:text-zinc-500">
+            ({items.length} kayıt)
+            {query.trim() ? (
+              <span className="text-emerald-700 dark:text-emerald-400">
+                {" "}
+                · {filtered.length} eşleşme
+              </span>
+            ) : null}
+          </span>
+        ) : null}
+      </p>
+      {items.length > 0 ? (
+        <div className="mb-2">
+          <label htmlFor={searchId} className="sr-only">
+            {label} içinde ara
+          </label>
+          <input
+            id={searchId}
+            type="search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="İsimde ara…"
+            autoComplete="off"
+            className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100 dark:placeholder:text-zinc-500"
+          />
+        </div>
+      ) : null}
+      {items.length === 0 ? (
+        <p className="rounded-lg border border-dashed border-zinc-200 px-3 py-2 text-xs text-zinc-500 dark:border-zinc-700">
+          —
+        </p>
+      ) : filtered.length === 0 ? (
+        <p className="rounded-lg border border-dashed border-amber-200/80 bg-amber-50/50 px-3 py-2 text-xs text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200">
+          “{query.trim()}” için sonuç yok.
+        </p>
+      ) : (
+        <ul className="max-h-52 space-y-2 overflow-y-auto rounded-lg border border-zinc-200/80 bg-white/90 p-2 dark:border-zinc-700 dark:bg-zinc-950/80">
+          {filtered.map((item, i) => (
+            <li
+              key={`${label}-f-${i}-${item.slice(0, 24)}`}
+              className="flex gap-2 rounded-md border border-zinc-100 bg-zinc-50/90 px-3 py-2 text-[13px] leading-snug text-zinc-800 dark:border-zinc-800/80 dark:bg-zinc-900/60 dark:text-zinc-200"
+            >
+              <span
+                className="shrink-0 select-none font-mono text-xs tabular-nums text-zinc-400 dark:text-zinc-500"
+                aria-hidden
+              >
+                {i + 1}.
+              </span>
+              <span className="min-w-0 break-words">{item}</span>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

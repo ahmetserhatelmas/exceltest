@@ -5,12 +5,21 @@ export type MonthlyCell = {
   tahakkuk: number | null;
 };
 
+/** Veri.xlsx → KAYNAK-TERFİ-DEPO sayfasından (ilçe+mahalle eşleşmesi) */
+export type KaynakDepoOzeti = {
+  depo: string;
+  kaynak: string;
+  terfi: string;
+};
+
 export type DashboardRecord = {
   defterNo: number;
   mahalle: string;
   ilce: string;
   abone: number;
   nufus: number | null;
+  /** Depo / kaynak / terfi adları (çoklu ise "; " ile ayrılmış) */
+  kaynakDepo?: KaynakDepoOzeti | null;
   monthly: MonthlyCell[];
 };
 
@@ -100,6 +109,36 @@ export function aggregate(filtered: DashboardRecord[]): AggregatedStats {
       totalNufus > 0 ? (totalAbone / totalNufus) * 100 : null,
     m3PerAbone: totalAbone > 0 ? totalM3 / totalAbone : null,
     birimFiyat: totalM3 > 0 ? totalTahakkuk / totalM3 : null,
+  };
+}
+
+function splitOzetiParts(s: string, into: Set<string>) {
+  if (!s?.trim()) return;
+  for (const part of s.split(";")) {
+    const t = part.trim();
+    if (t) into.add(t);
+  }
+}
+
+/** Seçili defterlerde geçen benzersiz depo, kaynak ve terfi isimleri */
+export function collectKaynakDepoSummary(
+  records: DashboardRecord[]
+): KaynakDepoOzeti | null {
+  const dep = new Set<string>();
+  const kay = new Set<string>();
+  const ter = new Set<string>();
+  for (const r of records) {
+    if (!r.kaynakDepo) continue;
+    splitOzetiParts(r.kaynakDepo.depo, dep);
+    splitOzetiParts(r.kaynakDepo.kaynak, kay);
+    splitOzetiParts(r.kaynakDepo.terfi, ter);
+  }
+  if (dep.size === 0 && kay.size === 0 && ter.size === 0) return null;
+  const sortTr = (a: string, b: string) => a.localeCompare(b, "tr-TR");
+  return {
+    depo: [...dep].sort(sortTr).join("; "),
+    kaynak: [...kay].sort(sortTr).join("; "),
+    terfi: [...ter].sort(sortTr).join("; "),
   };
 }
 

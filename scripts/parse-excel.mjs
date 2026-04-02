@@ -73,6 +73,90 @@ function num(v) {
   return null;
 }
 
+function strCell(v) {
+  if (v == null || v === "") return null;
+  if (typeof v === "string") {
+    const t = v.trim();
+    return t || null;
+  }
+  if (typeof v === "number" && Number.isFinite(v)) return String(v);
+  return null;
+}
+
+/** Sayfa KAYNAK-TERFİ-DEPO: ilçe+mahalle anahtarına depo / kaynak / terfi adları */
+function readKaynakDepoMap(wb) {
+  const name = "KAYNAK-TERFİ-DEPO";
+  if (!wb.SheetNames.includes(name)) return new Map();
+  const ws = wb.Sheets[name];
+  const rows = XLSX.utils.sheet_to_json(ws, {
+    header: 1,
+    defval: null,
+    raw: true,
+  });
+  /** @type {Map<string, { depo: Set<string>, kaynak: Set<string>, terfi: Set<string> }>} */
+  const map = new Map();
+
+  function bucket(key) {
+    if (!map.has(key))
+      map.set(key, {
+        depo: new Set(),
+        kaynak: new Set(),
+        terfi: new Set(),
+      });
+    return map.get(key);
+  }
+
+  function addRow(ilce, mahalle, depoAd, kaynakAd, terfiHat, terfiNokta) {
+    const i = strCell(ilce);
+    const m = strCell(mahalle);
+    if (!i || !m) return;
+    const key = nufusLookupKey(i, m);
+    const b = bucket(key);
+    const d = strCell(depoAd);
+    const k = strCell(kaynakAd);
+    if (d) b.depo.add(d);
+    if (k) b.kaynak.add(k);
+    const th = strCell(terfiHat);
+    const tn = strCell(terfiNokta);
+    if (th && tn) b.terfi.add(`${th} — ${tn}`);
+    else if (th) b.terfi.add(th);
+    else if (tn) b.terfi.add(tn);
+  }
+
+  for (let ri = 2; ri < rows.length; ri++) {
+    const r = rows[ri];
+    if (!r || r.length < 4) continue;
+    const depoAd = r[1];
+    const depoMah = r[2];
+    const depoIlce = r[3];
+    const kaynakAd = r[6];
+    const kaynakMah = r[8];
+    const kaynakIlce = r[9];
+    const terfiHat = r[11];
+    const terfiNokta = r[12];
+    const terfiMah = r[13];
+    const terfiIlce = r[14];
+
+    addRow(depoIlce, depoMah, depoAd, kaynakAd, terfiHat, terfiNokta);
+    addRow(kaynakIlce, kaynakMah, depoAd, kaynakAd, terfiHat, terfiNokta);
+    addRow(terfiIlce, terfiMah, depoAd, kaynakAd, terfiHat, terfiNokta);
+  }
+
+  /** @type {Map<string, { depo: string, kaynak: string, terfi: string }>} */
+  const out = new Map();
+  for (const [key, b] of map) {
+    const depo = [...b.depo].sort((a, x) => a.localeCompare(x, "tr-TR")).join("; ");
+    const kaynak = [...b.kaynak]
+      .sort((a, x) => a.localeCompare(x, "tr-TR"))
+      .join("; ");
+    const terfi = [...b.terfi]
+      .sort((a, x) => a.localeCompare(x, "tr-TR"))
+      .join("; ");
+    if (depo || kaynak || terfi) out.set(key, { depo, kaynak, terfi });
+  }
+  return out;
+}
+
 function readNufusMapFromWorkbook(wb, sheetName) {
   const ws = wb.Sheets[sheetName];
   if (!ws) return new Map();
@@ -136,6 +220,8 @@ function main() {
     nufusMap = readNufusMapFromWorkbook(wb, "NÜFUS");
     nufusSourceLabel = "Veri.xlsx (NÜFUS)";
   }
+
+  const kaynakDepoMap = readKaynakDepoMap(wb);
   const rows = XLSX.utils.sheet_to_json(ws, {
     header: 1,
     defval: null,
@@ -168,7 +254,9 @@ function main() {
       });
     }
 
-    const nufus = nufusMap.get(nufusLookupKey(ilce, mahalle)) ?? null;
+    const lk = nufusLookupKey(ilce, mahalle);
+    const nufus = nufusMap.get(lk) ?? null;
+    const kd = kaynakDepoMap.get(lk) ?? null;
 
     const defterNo = num(r[0]);
 
@@ -178,6 +266,7 @@ function main() {
       ilce: ilce.trim(),
       abone,
       nufus,
+      kaynakDepo: kd,
       monthly,
     });
 
@@ -206,14 +295,17 @@ function main() {
   fs.mkdirSync(path.dirname(outPath), { recursive: true });
   fs.writeFileSync(outPath, JSON.stringify(payload), "utf-8");
   const withNufus = records.filter((r) => r.nufus != null).length;
+  const withKd = records.filter((r) => r.kaynakDepo != null).length;
   console.log(
     "Yazıldı:",
     outPath,
     "kayıt:",
     records.length,
-    "nüfus eşleşen:",
+    "nüfus:",
     withNufus,
-    "| nüfus:",
+    "kaynak/depo:",
+    withKd,
+    "|",
     nufusSourceLabel
   );
 }
