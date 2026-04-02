@@ -11,10 +11,11 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import type { DashboardPayload } from "@/lib/dashboard";
+import type { DashboardPayload, IlcePerformansSatiri } from "@/lib/dashboard";
 import {
   aggregate,
   collectKaynakDepoSummary,
+  computeIlcePerformans,
   filterRecords,
   statsForMonth,
 } from "@/lib/dashboard";
@@ -56,6 +57,7 @@ export default function Dashboard({ data }: Props) {
   const [monthIndex, setMonthIndex] = useState(11);
   /** Kaynak/depo paneli: ilk yüklemede açık, yer kazanmak için kapatılabilir */
   const [kaynakPanelOpen, setKaynakPanelOpen] = useState(true);
+  const [ilcePerformansPanelOpen, setIlcePerformansPanelOpen] = useState(true);
 
   const mahalleOptions = useMemo(() => {
     if (!ilce) return [];
@@ -99,6 +101,17 @@ export default function Dashboard({ data }: Props) {
   const kaynakOzeti = useMemo(
     () => collectKaynakDepoSummary(filtered),
     [filtered]
+  );
+
+  const ilcePerformans = useMemo(
+    () =>
+      computeIlcePerformans(
+        data.records,
+        period === "toplam"
+          ? { tur: "yillik" }
+          : { tur: "aylik", ayIndeks: monthIndex }
+      ),
+    [data.records, period, monthIndex]
   );
 
   return (
@@ -316,6 +329,108 @@ export default function Dashboard({ data }: Props) {
         />
       </section>
 
+      <section className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
+        <button
+          type="button"
+          onClick={() => setIlcePerformansPanelOpen((o) => !o)}
+          className="flex w-full items-center justify-between gap-3 rounded-lg text-left outline-none ring-sky-500/40 transition hover:bg-black/[0.03] focus-visible:ring-2 dark:hover:bg-white/[0.04]"
+          aria-expanded={ilcePerformansPanelOpen}
+          aria-controls="ilce-performans-panel"
+          id="ilce-performans-toggle"
+        >
+          <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">
+            İlçe bazlı okuma performansı ve ortalama tüketim
+          </h2>
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            viewBox="0 0 20 20"
+            fill="currentColor"
+            className={`h-5 w-5 shrink-0 text-sky-600 transition-transform duration-200 dark:text-sky-400 ${
+              ilcePerformansPanelOpen ? "" : "-rotate-90"
+            }`}
+            aria-hidden
+          >
+            <path
+              fillRule="evenodd"
+              d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.94a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z"
+              clipRule="evenodd"
+            />
+          </svg>
+        </button>
+
+        <div
+          id="ilce-performans-panel"
+          role="region"
+          aria-labelledby="ilce-performans-toggle"
+          className={ilcePerformansPanelOpen ? "mt-3" : "hidden"}
+        >
+          <p className="text-xs text-zinc-500 dark:text-zinc-500">
+            Üstteki <strong>Gösterim</strong> ile aynı dönem:{" "}
+            {period === "toplam"
+              ? "12 ay toplamı"
+              : data.months[monthIndex] ?? `Ay ${monthIndex + 1}`}
+            . Tüm defterler üzerinden ilçe bazında toplanır (mahalle filtresi bu
+            tabloyu daraltmaz).
+          </p>
+          <ul className="mt-2 list-inside list-disc text-xs text-zinc-500 dark:text-zinc-500">
+            <li>
+              <strong>Ort. M³/abone:</strong> dönem toplam M³ ÷ toplam okunabilir
+              abone (Σ M³ / Σ abone).
+            </li>
+            <li>
+              <strong>Okuma/abone:</strong> Σ okuma sayısı ÷ Σ okunabilir abone
+              (ekip performansı göstergesi).
+            </li>
+            <li>
+              <strong>Okunamayan %:</strong> (Σ abone − Σ okuma) ÷ Σ abone × 100.
+              Okuma sayısı aboneden fazlaysa negatif çıkabilir.
+            </li>
+            <li>
+              <strong>Başarı sırası:</strong> okuma/abone oranı yüksekten düşüğe;
+              1 = en yüksek oran.
+            </li>
+          </ul>
+          <div className="mt-4 overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
+            <table className="w-full min-w-[720px] border-collapse text-left text-sm">
+              <thead>
+                <tr className="border-b border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900/80">
+                  <th className="px-3 py-2 font-semibold text-zinc-700 dark:text-zinc-300">
+                    Sıra
+                  </th>
+                  <th className="px-3 py-2 font-semibold text-zinc-700 dark:text-zinc-300">
+                    İlçe
+                  </th>
+                  <th className="px-3 py-2 font-semibold text-zinc-700 dark:text-zinc-300">
+                    Σ abone
+                  </th>
+                  <th className="px-3 py-2 font-semibold text-zinc-700 dark:text-zinc-300">
+                    Σ okuma
+                  </th>
+                  <th className="px-3 py-2 font-semibold text-zinc-700 dark:text-zinc-300">
+                    Ort. M³/abone
+                  </th>
+                  <th className="px-3 py-2 font-semibold text-zinc-700 dark:text-zinc-300">
+                    Okuma/abone
+                  </th>
+                  <th className="px-3 py-2 font-semibold text-zinc-700 dark:text-zinc-300">
+                    Okunamayan %
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {ilcePerformans.map((row) => (
+                  <IlcePerformansRow
+                    key={row.ilce}
+                    row={row}
+                    seciliIlce={ilce}
+                  />
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
       <section className="grid gap-8 lg:grid-cols-1">
         <ChartCard title="Aylık metreküp (M³) tüketimi">
           <ResponsiveContainer width="100%" height={320}>
@@ -402,6 +517,47 @@ export default function Dashboard({ data }: Props) {
         </ChartCard>
       </section>
     </div>
+  );
+}
+
+function IlcePerformansRow({
+  row,
+  seciliIlce,
+}: {
+  row: IlcePerformansSatiri;
+  seciliIlce: string;
+}) {
+  const vurgu = Boolean(seciliIlce && row.ilce === seciliIlce);
+  return (
+    <tr
+      className={`border-b border-zinc-100 dark:border-zinc-800/80 ${
+        vurgu
+          ? "bg-sky-50 dark:bg-sky-950/35"
+          : "hover:bg-zinc-50/80 dark:hover:bg-zinc-900/50"
+      }`}
+    >
+      <td className="px-3 py-2 tabular-nums text-zinc-600 dark:text-zinc-400">
+        {row.basariSirasi}
+      </td>
+      <td className="px-3 py-2 font-medium text-zinc-900 dark:text-zinc-100">
+        {row.ilce}
+      </td>
+      <td className="px-3 py-2 tabular-nums text-zinc-800 dark:text-zinc-200">
+        {nf0.format(row.toplamAbone)}
+      </td>
+      <td className="px-3 py-2 tabular-nums text-zinc-800 dark:text-zinc-200">
+        {nf0.format(row.toplamOkuma)}
+      </td>
+      <td className="px-3 py-2 tabular-nums text-zinc-800 dark:text-zinc-200">
+        {nf.format(row.ortalamaM3PerAbone)}
+      </td>
+      <td className="px-3 py-2 tabular-nums text-zinc-800 dark:text-zinc-200">
+        {nf.format(row.okumaBolumAbone)}
+      </td>
+      <td className="px-3 py-2 tabular-nums text-zinc-800 dark:text-zinc-200">
+        {nf.format(row.okunamayanYuzde)}
+      </td>
+    </tr>
   );
 }
 
