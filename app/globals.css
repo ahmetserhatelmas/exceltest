@@ -3,6 +3,9 @@
 :root {
   --background: #ffffff;
   --foreground: #171717;
+  /* Recharts eksen/legend (SVG fill — Tailwind className güvenilir değil) */
+  --chart-tick: #3f3f46;
+  --chart-tooltip-border: #e4e4e7;
 }
 
 @theme inline {
@@ -16,6 +19,8 @@
   :root {
     --background: #0a0a0a;
     --foreground: #ededed;
+    --chart-tick: #d4d4d8;
+    --chart-tooltip-border: #3f3f46;
   }
 }
 
