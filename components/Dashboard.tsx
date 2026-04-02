@@ -21,6 +21,29 @@ import {
 const nf = new Intl.NumberFormat("tr-TR", { maximumFractionDigits: 2 });
 const nf0 = new Intl.NumberFormat("tr-TR", { maximumFractionDigits: 0 });
 
+const chartMargin = { top: 8, right: 12, left: 22, bottom: 8 } as const;
+const yAxisWidth = 108;
+
+/** Y ekseni etiketleri dar alanda kesilmesin diye (TL: milyon/bin). */
+function formatYAxisTl(v: unknown): string {
+  const n = typeof v === "number" ? v : Number(v);
+  if (!Number.isFinite(n)) return "";
+  const a = Math.abs(n);
+  if (a >= 1_000_000) return `${nf.format(n / 1_000_000)} mn`;
+  if (a >= 10_000) return `${nf0.format(Math.round(n / 1_000))} bin`;
+  return nf0.format(n);
+}
+
+function formatYAxisM3(v: unknown): string {
+  const n = typeof v === "number" ? v : Number(v);
+  if (!Number.isFinite(n)) return "";
+  return nf0.format(n);
+}
+
+function legendFormatter(value: string) {
+  return <span style={{ color: "var(--chart-tick)" }}>{value}</span>;
+}
+
 type Props = {
   data: DashboardPayload;
 };
@@ -177,7 +200,7 @@ export default function Dashboard({ data }: Props) {
         Seçime göre <strong>{filtered.length}</strong> defter kaydı
       </p>
 
-      <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
         <KpiCard
           title="Abone / nüfus"
           subtitle={kpi.hasNufusData ? "yüzde" : "nüfus eşleşmesi yok"}
@@ -185,6 +208,17 @@ export default function Dashboard({ data }: Props) {
             kpi.aboneNufusYuzde != null
               ? `${nf.format(kpi.aboneNufusYuzde)} %`
               : "—"
+          }
+        />
+        <KpiCard
+          title="Toplam nüfus"
+          subtitle={
+            kpi.hasNufusData
+              ? "filtreye göre (benzersiz mahalle)"
+              : "nüfus eşleşmesi yok"
+          }
+          value={
+            kpi.hasNufusData ? nf0.format(kpi.totalNufus) : "—"
           }
         />
         <KpiCard
@@ -211,7 +245,7 @@ export default function Dashboard({ data }: Props) {
       <section className="grid gap-8 lg:grid-cols-1">
         <ChartCard title="Aylık metreküp (M³) tüketimi">
           <ResponsiveContainer width="100%" height={320}>
-            <BarChart data={chartData} margin={{ top: 8, right: 8, left: 4, bottom: 8 }}>
+            <BarChart data={chartData} margin={chartMargin}>
               <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-tooltip-border)" />
               <XAxis
                 dataKey="ay"
@@ -224,10 +258,11 @@ export default function Dashboard({ data }: Props) {
                 height={56}
               />
               <YAxis
+                width={yAxisWidth}
                 tick={{ ...axisTick, fontSize: 11 }}
                 tickLine={{ stroke: "var(--chart-tick)" }}
                 axisLine={{ stroke: "var(--chart-tooltip-border)" }}
-                tickFormatter={(v) => nf0.format(v)}
+                tickFormatter={formatYAxisM3}
               />
               <Tooltip
                 formatter={(value) =>
@@ -241,7 +276,10 @@ export default function Dashboard({ data }: Props) {
                 }}
                 labelStyle={{ color: "var(--foreground)", fontWeight: 600 }}
               />
-              <Legend wrapperStyle={{ color: "var(--chart-tick)", fontSize: 13 }} />
+              <Legend
+                wrapperStyle={{ fontSize: 13 }}
+                formatter={legendFormatter}
+              />
               <Bar dataKey="m3" name="M³" fill="#0ea5e9" radius={[4, 4, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
@@ -249,7 +287,7 @@ export default function Dashboard({ data }: Props) {
 
         <ChartCard title="Aylık tahakkuk (TL)">
           <ResponsiveContainer width="100%" height={320}>
-            <BarChart data={chartData} margin={{ top: 8, right: 8, left: 4, bottom: 8 }}>
+            <BarChart data={chartData} margin={chartMargin}>
               <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-tooltip-border)" />
               <XAxis
                 dataKey="ay"
@@ -262,10 +300,11 @@ export default function Dashboard({ data }: Props) {
                 height={56}
               />
               <YAxis
+                width={yAxisWidth}
                 tick={{ ...axisTick, fontSize: 11 }}
                 tickLine={{ stroke: "var(--chart-tick)" }}
                 axisLine={{ stroke: "var(--chart-tooltip-border)" }}
-                tickFormatter={(v) => nf0.format(v)}
+                tickFormatter={formatYAxisTl}
               />
               <Tooltip
                 formatter={(value) =>
@@ -279,7 +318,10 @@ export default function Dashboard({ data }: Props) {
                 }}
                 labelStyle={{ color: "var(--foreground)", fontWeight: 600 }}
               />
-              <Legend wrapperStyle={{ color: "var(--chart-tick)", fontSize: 13 }} />
+              <Legend
+                wrapperStyle={{ fontSize: 13 }}
+                formatter={legendFormatter}
+              />
               <Bar dataKey="tahakkuk" name="Tahakkuk (TL)" fill="#8b5cf6" radius={[4, 4, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
