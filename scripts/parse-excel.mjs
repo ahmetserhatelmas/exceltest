@@ -73,6 +73,13 @@ function num(v) {
   return null;
 }
 
+function textCell(v) {
+  if (v == null || v === "") return "";
+  if (typeof v === "string") return v.trim();
+  if (typeof v === "number" && Number.isFinite(v)) return String(v);
+  return String(v).trim();
+}
+
 function strCell(v) {
   if (v == null || v === "") return null;
   if (typeof v === "string") {
@@ -259,11 +266,15 @@ function main() {
     const kd = kaynakDepoMap.get(lk) ?? null;
 
     const defterNo = num(r[0]);
+    const muhtar = textCell(r[1]);
+    const telefon = textCell(r[2]);
 
     records.push({
       defterNo: defterNo ?? i,
       mahalle: mahalle.trim(),
       ilce: ilce.trim(),
+      muhtar,
+      telefon,
       abone,
       nufus,
       kaynakDepo: kd,

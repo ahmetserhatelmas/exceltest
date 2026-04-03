@@ -17,6 +17,7 @@ import {
   collectKaynakDepoSummary,
   computeIlcePerformans,
   filterRecords,
+  recordTahakkukDönem,
   statsForMonth,
 } from "@/lib/dashboard";
 
@@ -58,6 +59,8 @@ export default function Dashboard({ data }: Props) {
   /** Kaynak/depo paneli: ilk yüklemede açık, yer kazanmak için kapatılabilir */
   const [kaynakPanelOpen, setKaynakPanelOpen] = useState(true);
   const [ilcePerformansPanelOpen, setIlcePerformansPanelOpen] = useState(true);
+  const [muhtarPanelOpen, setMuhtarPanelOpen] = useState(true);
+  const [muhtarTabloAra, setMuhtarTabloAra] = useState("");
 
   const mahalleOptions = useMemo(() => {
     if (!ilce) return [];
@@ -113,6 +116,26 @@ export default function Dashboard({ data }: Props) {
       ),
     [data.records, period, monthIndex]
   );
+
+  const defterIletisimSatirlari = useMemo(() => {
+    const sorted = [...filtered].sort((a, b) => {
+      const c = a.ilce.localeCompare(b.ilce, "tr-TR");
+      if (c !== 0) return c;
+      const m = a.mahalle.localeCompare(b.mahalle, "tr-TR");
+      if (m !== 0) return m;
+      return a.defterNo - b.defterNo;
+    });
+    const q = muhtarTabloAra.trim().toLocaleLowerCase("tr-TR");
+    if (!q) return sorted;
+    return sorted.filter((r) => {
+      const s = `${r.ilce} ${r.mahalle} ${r.muhtar ?? ""} ${r.telefon ?? ""} ${r.defterNo}`.toLocaleLowerCase(
+        "tr-TR"
+      );
+      return s.includes(q);
+    });
+  }, [filtered, muhtarTabloAra]);
+
+  const tahakkukTur = period === "toplam" ? "yillik" : "aylik";
 
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-4 py-10">
@@ -287,7 +310,7 @@ export default function Dashboard({ data }: Props) {
         </div>
       </section>
 
-      <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+      <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 [&>*]:min-w-0">
         <KpiCard
           title="Abone / nüfus"
           subtitle={kpi.hasNufusData ? "yüzde" : "nüfus eşleşmesi yok"}
@@ -327,6 +350,139 @@ export default function Dashboard({ data }: Props) {
           subtitle="seçili alan"
           value={nf0.format(kpi.totalAbone)}
         />
+        <KpiCard
+          title="Toplam tahakkuk"
+          subtitle={
+            period === "aylik"
+              ? `${data.months[monthIndex] ?? "Ay"} toplamı (TL)`
+              : "yıl toplamı (TL)"
+          }
+          value={nf.format(kpi.totalTahakkuk)}
+        />
+      </section>
+
+      <section className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
+        <button
+          type="button"
+          onClick={() => setMuhtarPanelOpen((o) => !o)}
+          className="flex w-full items-center justify-between gap-3 rounded-lg text-left outline-none ring-violet-500/40 transition hover:bg-black/[0.03] focus-visible:ring-2 dark:hover:bg-white/[0.04]"
+          aria-expanded={muhtarPanelOpen}
+          aria-controls="muhtar-iletisim-panel"
+          id="muhtar-iletisim-toggle"
+        >
+          <h2 className="text-base font-semibold text-zinc-900 dark:text-zinc-100">
+            Muhtar iletişim ve tahakkuk (defter listesi)
+          </h2>
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            viewBox="0 0 20 20"
+            fill="currentColor"
+            className={`h-5 w-5 shrink-0 text-violet-600 transition-transform duration-200 dark:text-violet-400 ${
+              muhtarPanelOpen ? "" : "-rotate-90"
+            }`}
+            aria-hidden
+          >
+            <path
+              fillRule="evenodd"
+              d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.94a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z"
+              clipRule="evenodd"
+            />
+          </svg>
+        </button>
+
+        <div
+          id="muhtar-iletisim-panel"
+          role="region"
+          aria-labelledby="muhtar-iletisim-toggle"
+          className={muhtarPanelOpen ? "mt-3" : "hidden"}
+        >
+          <p className="text-xs text-zinc-500 dark:text-zinc-500">
+            Sayfa1: muhtar ve telefon. Tahakkuk, üstteki <strong>Gösterim</strong>{" "}
+            ile aynı dönem (yıllık toplam veya seçilen ay). Arama: ilçe, mahalle,
+            muhtar, telefon, defter no.
+          </p>
+          <label className="mt-3 block text-sm font-medium text-zinc-700 dark:text-zinc-300">
+            <span className="sr-only">Tabloda ara</span>
+            <input
+              type="search"
+              value={muhtarTabloAra}
+              onChange={(e) => setMuhtarTabloAra(e.target.value)}
+              placeholder="İlçe, mahalle, muhtar, telefon…"
+              className="mt-1 w-full max-w-md rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-violet-500 focus:outline-none focus:ring-2 focus:ring-violet-500/20 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100"
+            />
+          </label>
+          <p className="mt-2 text-xs text-zinc-500">
+            {defterIletisimSatirlari.length} / {filtered.length} satır
+          </p>
+          <div className="mt-3 max-h-[min(28rem,70vh)] overflow-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
+            <table className="w-full min-w-[640px] border-collapse text-left text-sm">
+              <thead className="sticky top-0 z-10 border-b border-zinc-200 bg-zinc-100 dark:border-zinc-800 dark:bg-zinc-900">
+                <tr>
+                  <th className="px-3 py-2 font-semibold text-zinc-700 dark:text-zinc-300">
+                    Defter
+                  </th>
+                  <th className="px-3 py-2 font-semibold text-zinc-700 dark:text-zinc-300">
+                    İlçe
+                  </th>
+                  <th className="px-3 py-2 font-semibold text-zinc-700 dark:text-zinc-300">
+                    Mahalle
+                  </th>
+                  <th className="px-3 py-2 font-semibold text-zinc-700 dark:text-zinc-300">
+                    Muhtar
+                  </th>
+                  <th className="px-3 py-2 font-semibold text-zinc-700 dark:text-zinc-300">
+                    Telefon
+                  </th>
+                  <th className="px-3 py-2 font-semibold text-zinc-700 dark:text-zinc-300">
+                    Abone
+                  </th>
+                  <th className="px-3 py-2 font-semibold text-zinc-700 dark:text-zinc-300">
+                    {period === "aylik"
+                      ? `Tahakkuk (${data.months[monthIndex] ?? "ay"}, TL)`
+                      : "Tahakkuk (yıl, TL)"}
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {defterIletisimSatirlari.map((r) => {
+                  const tah = recordTahakkukDönem(
+                    r,
+                    tahakkukTur,
+                    monthIndex
+                  );
+                  return (
+                    <tr
+                      key={`${r.defterNo}-${r.ilce}-${r.mahalle}`}
+                      className="border-b border-zinc-100 hover:bg-zinc-50 dark:border-zinc-800/80 dark:hover:bg-zinc-900/50"
+                    >
+                      <td className="px-3 py-2 tabular-nums text-zinc-600 dark:text-zinc-400">
+                        {r.defterNo}
+                      </td>
+                      <td className="px-3 py-2 text-zinc-800 dark:text-zinc-200">
+                        {r.ilce}
+                      </td>
+                      <td className="px-3 py-2 text-zinc-800 dark:text-zinc-200">
+                        {r.mahalle}
+                      </td>
+                      <td className="px-3 py-2 text-zinc-800 dark:text-zinc-200">
+                        {r.muhtar?.trim() ? r.muhtar : "—"}
+                      </td>
+                      <td className="px-3 py-2 whitespace-nowrap text-zinc-800 dark:text-zinc-200">
+                        {r.telefon?.trim() ? r.telefon : "—"}
+                      </td>
+                      <td className="px-3 py-2 tabular-nums text-zinc-800 dark:text-zinc-200">
+                        {nf0.format(r.abone)}
+                      </td>
+                      <td className="px-3 py-2 tabular-nums text-zinc-800 dark:text-zinc-200">
+                        {nf.format(tah)}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
       </section>
 
       <section className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
@@ -656,13 +812,15 @@ function KpiCard({
   value: string;
 }) {
   return (
-    <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
+    <div className="min-w-0 overflow-hidden rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
       <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">
         {title}
       </p>
-      <p className="mt-2 text-2xl font-semibold tabular-nums text-zinc-900 dark:text-zinc-50">
-        {value}
-      </p>
+      <div className="mt-2 max-w-full overflow-x-auto overscroll-x-contain [-ms-overflow-style:auto] [scrollbar-width:thin]">
+        <p className="w-max min-w-full whitespace-nowrap text-xl font-semibold tabular-nums text-zinc-900 sm:text-2xl dark:text-zinc-50">
+          {value}
+        </p>
+      </div>
       <p className="mt-1 text-xs text-zinc-500">{subtitle}</p>
     </div>
   );

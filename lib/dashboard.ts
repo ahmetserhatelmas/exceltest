@@ -16,12 +16,26 @@ export type DashboardRecord = {
   defterNo: number;
   mahalle: string;
   ilce: string;
+  muhtar?: string;
+  telefon?: string;
   abone: number;
   nufus: number | null;
   /** Depo / kaynak / terfi adları (çoklu ise "; " ile ayrılmış) */
   kaynakDepo?: KaynakDepoOzeti | null;
   monthly: MonthlyCell[];
 };
+
+/** Defter satırı için seçilen dönemdeki toplam tahakkuk (TL) */
+export function recordTahakkukDönem(
+  r: DashboardRecord,
+  tur: "yillik" | "aylik",
+  ayIndeks: number
+): number {
+  if (tur === "yillik") {
+    return r.monthly.reduce((s, c) => s + (c.tahakkuk ?? 0), 0);
+  }
+  return r.monthly[ayIndeks]?.tahakkuk ?? 0;
+}
 
 export type DashboardPayload = {
   generatedAt: string;
