@@ -69,11 +69,14 @@ export default function Dashboard({ data }: Props) {
   const [activeSection, setActiveSection] = useState<SectionId>("ozet");
   const [ilce, setIlce] = useState("");
   const [mahalle, setMahalle] = useState("");
-  const [monthIndex, setMonthIndex] = useState(0);
+  /** -1 = Tümü (yıllık toplam), 0–11 = ay indeksi */
+  const [monthIndex, setMonthIndex] = useState<number>(-1);
   const [muhtarAra, setMuhtarAra] = useState("");
   const [kaynakPanelOpen, setKaynakPanelOpen] = useState(true);
 
   const dataYear = data.dataYear ?? 2025;
+  const availableYears = [dataYear, dataYear + 1];
+  const isYearly = monthIndex === -1;
 
   const mahalleOptions = useMemo(() => {
     if (!ilce) return [];
@@ -92,7 +95,10 @@ export default function Dashboard({ data }: Props) {
 
   const agg = useMemo(() => aggregate(filtered), [filtered]);
 
-  const kpi = useMemo(() => statsForMonth(agg, monthIndex), [agg, monthIndex]);
+  const kpi = useMemo(
+    () => (isYearly ? agg : statsForMonth(agg, monthIndex)),
+    [agg, isYearly, monthIndex]
+  );
 
   const axisTick = {
     fill: "var(--chart-tick)",
@@ -133,11 +139,11 @@ export default function Dashboard({ data }: Props) {
 
   const ilcePerformansResult = useMemo(
     () =>
-      computeIlcePerformans(data.records, {
-        tur: "aylik",
-        ayIndeks: monthIndex,
-      }),
-    [data.records, monthIndex]
+      computeIlcePerformans(
+        data.records,
+        isYearly ? { tur: "yillik" } : { tur: "aylik", ayIndeks: monthIndex }
+      ),
+    [data.records, isYearly, monthIndex]
   );
 
   const defterSatirlari = useMemo(() => {
@@ -157,7 +163,9 @@ export default function Dashboard({ data }: Props) {
     );
   }, [filtered, muhtarAra]);
 
-  const selectedMonthLabel = data.months[monthIndex] ?? `Ay ${monthIndex + 1}`;
+  const selectedMonthLabel = isYearly
+    ? "Tümü (Yıllık)"
+    : (data.months[monthIndex] ?? `Ay ${monthIndex + 1}`);
 
   const selectCls =
     "rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-sm text-zinc-900 disabled:opacity-50 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100";
@@ -181,7 +189,11 @@ export default function Dashboard({ data }: Props) {
           <label className="flex flex-col gap-1 text-xs font-medium text-zinc-600 dark:text-zinc-400">
             Yıl
             <select className={selectCls} value={dataYear} disabled>
-              <option value={dataYear}>{dataYear}</option>
+              {availableYears.map((y) => (
+                <option key={y} value={y}>
+                  {y}
+                </option>
+              ))}
             </select>
           </label>
 
@@ -192,6 +204,7 @@ export default function Dashboard({ data }: Props) {
               value={monthIndex}
               onChange={(e) => setMonthIndex(Number(e.target.value))}
             >
+              <option value={-1}>Tümü (Yıllık)</option>
               {data.months.map((ay, i) => (
                 <option key={ay} value={i}>
                   {ay}
@@ -260,7 +273,7 @@ export default function Dashboard({ data }: Props) {
           />
           <KpiCard
             title="Toplam tahakkuk"
-            subtitle={`${selectedMonthLabel} (TL)`}
+            subtitle={isYearly ? "yıllık toplam (TL)" : `${selectedMonthLabel} (TL)`}
             value={nf.format(kpi.totalTahakkuk)}
             valueCompact
           />
@@ -282,7 +295,7 @@ export default function Dashboard({ data }: Props) {
           />
           <KpiCard
             title="M³ / abone"
-            subtitle={selectedMonthLabel}
+            subtitle={isYearly ? "yıllık toplam" : selectedMonthLabel}
             value={kpi.m3PerAbone != null ? nf.format(kpi.m3PerAbone) : "—"}
           />
         </div>
@@ -476,7 +489,9 @@ export default function Dashboard({ data }: Props) {
                           "Muhtar",
                           "Telefon",
                           "Abone",
-                          `Tahakkuk (${selectedMonthLabel}, TL)`,
+                          isYearly
+                            ? "Tahakkuk (Yıllık, TL)"
+                            : `Tahakkuk (${selectedMonthLabel}, TL)`,
                         ].map((h) => (
                           <th
                             key={h}
@@ -489,7 +504,11 @@ export default function Dashboard({ data }: Props) {
                     </thead>
                     <tbody>
                       {defterSatirlari.map((r) => {
-                        const tah = recordTahakkukDönem(r, "aylik", monthIndex);
+                          const tah = recordTahakkukDönem(
+                            r,
+                            isYearly ? "yillik" : "aylik",
+                            isYearly ? 0 : monthIndex
+                          );
                         return (
                           <tr
                             key={`${r.defterNo}-${r.ilce}-${r.mahalle}`}
@@ -595,7 +614,7 @@ export default function Dashboard({ data }: Props) {
               <div className="flex flex-col gap-4">
                 <p className="text-xs text-zinc-500 dark:text-zinc-500">
                   <strong>
-                    {selectedMonthLabel} {dataYear}
+                    {isYearly ? `${dataYear} Yıllık Toplam` : `${selectedMonthLabel} ${dataYear}`}
                   </strong>{" "}
                   verisi. Tüm defterler üzerinden ilçe bazında toplanır
                   (mahalle filtresi bu tabloyu daraltmaz).
