@@ -76,6 +76,11 @@ export default function Dashboard({ data }: Props) {
 
   const dataYear = data.dataYear ?? 2025;
   const availableYears = [dataYear, dataYear + 1];
+  const [selectedYear, setSelectedYear] = useState<number>(dataYear);
+
+  /** Seçilen yıl için veri var mı? (yalnızca dataYear'a ait kayıtlar mevcut) */
+  const hasDataForYear = selectedYear === dataYear;
+
   const isYearly = monthIndex === -1;
 
   const mahalleOptions = useMemo(() => {
@@ -188,7 +193,11 @@ export default function Dashboard({ data }: Props) {
         <div className="flex flex-wrap items-end gap-3">
           <label className="flex flex-col gap-1 text-xs font-medium text-zinc-600 dark:text-zinc-400">
             Yıl
-            <select className={selectCls} value={dataYear} disabled>
+            <select
+              className={selectCls}
+              value={selectedYear}
+              onChange={(e) => setSelectedYear(Number(e.target.value))}
+            >
               {availableYears.map((y) => (
                 <option key={y} value={y}>
                   {y}
@@ -260,45 +269,51 @@ export default function Dashboard({ data }: Props) {
 
       {/* ── KPI ŞERİDİ — her bölümde sabit ── */}
       <div className="border-b border-zinc-200 bg-white px-6 py-4 dark:border-zinc-800 dark:bg-zinc-950">
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-          <KpiCard
-            title="Toplam nüfus"
-            subtitle={kpi.hasNufusData ? "benzersiz mahalle" : "eşleşme yok"}
-            value={kpi.hasNufusData ? nf0.format(kpi.totalNufus) : "—"}
-          />
-          <KpiCard
-            title="Toplam abone"
-            subtitle="seçili alan"
-            value={nf0.format(kpi.totalAbone)}
-          />
-          <KpiCard
-            title="Toplam tahakkuk"
-            subtitle={isYearly ? "yıllık toplam (TL)" : `${selectedMonthLabel} (TL)`}
-            value={nf.format(kpi.totalTahakkuk)}
-            valueCompact
-          />
-          <KpiCard
-            title="Birim fiyat"
-            subtitle="TL/m³"
-            value={
-              kpi.birimFiyat != null ? `${nf.format(kpi.birimFiyat)} ₺` : "—"
-            }
-          />
-          <KpiCard
-            title="Abone / nüfus"
-            subtitle={kpi.hasNufusData ? "yüzde" : "eşleşme yok"}
-            value={
-              kpi.aboneNufusYuzde != null
-                ? `% ${nf.format(kpi.aboneNufusYuzde)}`
-                : "—"
-            }
-          />
-          <KpiCard
-            title="M³ / abone"
-            subtitle={isYearly ? "yıllık toplam" : selectedMonthLabel}
-            value={kpi.m3PerAbone != null ? nf.format(kpi.m3PerAbone) : "—"}
-          />
-        </div>
+        {hasDataForYear ? (
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+            <KpiCard
+              title="Toplam nüfus"
+              subtitle={kpi.hasNufusData ? "benzersiz mahalle" : "eşleşme yok"}
+              value={kpi.hasNufusData ? nf0.format(kpi.totalNufus) : "—"}
+            />
+            <KpiCard
+              title="Toplam abone"
+              subtitle="seçili alan"
+              value={nf0.format(kpi.totalAbone)}
+            />
+            <KpiCard
+              title="Toplam tahakkuk"
+              subtitle={isYearly ? "yıllık toplam (TL)" : `${selectedMonthLabel} (TL)`}
+              value={nf.format(kpi.totalTahakkuk)}
+              valueCompact
+            />
+            <KpiCard
+              title="Birim fiyat"
+              subtitle="TL/m³"
+              value={
+                kpi.birimFiyat != null ? `${nf.format(kpi.birimFiyat)} ₺` : "—"
+              }
+            />
+            <KpiCard
+              title="Abone / nüfus"
+              subtitle={kpi.hasNufusData ? "yüzde" : "eşleşme yok"}
+              value={
+                kpi.aboneNufusYuzde != null
+                  ? `% ${nf.format(kpi.aboneNufusYuzde)}`
+                  : "—"
+              }
+            />
+            <KpiCard
+              title="M³ / abone"
+              subtitle={isYearly ? "yıllık toplam" : selectedMonthLabel}
+              value={kpi.m3PerAbone != null ? nf.format(kpi.m3PerAbone) : "—"}
+            />
+          </div>
+        ) : (
+          <p className="text-sm text-zinc-500 dark:text-zinc-500">
+            <span className="font-medium text-zinc-700 dark:text-zinc-300">{selectedYear}</span> yılı için henüz veri yüklenmedi.
+          </p>
+        )}
       </div>
 
       {/* ── ANA LAYOUT: SİDEBAR + İÇERİK ── */}
@@ -343,6 +358,15 @@ export default function Dashboard({ data }: Props) {
 
           {/* İÇERİK */}
           <div className="p-4 md:p-6">
+            {!hasDataForYear ? (
+              <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-zinc-300 bg-zinc-50 py-20 text-center dark:border-zinc-700 dark:bg-zinc-900/40">
+                <p className="text-2xl">📂</p>
+                <p className="font-semibold text-zinc-700 dark:text-zinc-300">
+                  {selectedYear} yılı için henüz veri yok
+                </p>
+              </div>
+            ) : (
+            <>
             {/* ── ÖZET ── */}
             {activeSection === "ozet" && (
               <div className="flex flex-col gap-6">
@@ -684,6 +708,8 @@ export default function Dashboard({ data }: Props) {
                   </table>
                 </div>
               </div>
+            )}
+            </>
             )}
           </div>
         </div>
