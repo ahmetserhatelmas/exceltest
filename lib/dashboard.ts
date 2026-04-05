@@ -39,6 +39,8 @@ export function recordTahakkukDönem(
 
 export type DashboardPayload = {
   generatedAt: string;
+  /** Excel verisinin ait olduğu yıl (ör. 2025) */
+  dataYear?: number;
   /** Örn. "Nufus.xlsx (Sheet1)" */
   nufusKaynak?: string;
   months: string[];
@@ -201,6 +203,8 @@ export type IlcePerformansSatiri = {
   toplamM3: number;
   /** Okuma / Abone × 100 (tek ay için anlamlı oran) */
   okumaOrani: number;
+  /** (Abone − Okuma) / Abone × 100 */
+  okunamayanYuzde: number;
   /** Fatura / Okuma × 100 (faturalama başarısı) */
   faturaBasarisi: number;
   /** Okuma oranına göre azalan sıra; 1 = en yüksek */
@@ -212,6 +216,7 @@ export type IlcePerformansToplam = {
   toplamOkuma: number;
   toplamFatura: number;
   okumaOrani: number;
+  okunamayanYuzde: number;
   faturaBasarisi: number;
 };
 
@@ -259,6 +264,7 @@ export function computeIlcePerformans(
     if (v.abone <= 0) continue;
     const abonePeriod = v.abone * ayCount;
     const okumaOrani = abonePeriod > 0 ? (v.okuma / abonePeriod) * 100 : 0;
+    const okunamayanYuzde = abonePeriod > 0 ? ((abonePeriod - v.okuma) / abonePeriod) * 100 : 100;
     const faturaBasarisi = v.okuma > 0 ? (v.fatura / v.okuma) * 100 : 0;
     satirlar.push({
       ilce,
@@ -267,6 +273,7 @@ export function computeIlcePerformans(
       toplamFatura: v.fatura,
       toplamM3: v.m3,
       okumaOrani,
+      okunamayanYuzde,
       faturaBasarisi,
       basariSirasi: 0,
     });
@@ -284,6 +291,7 @@ export function computeIlcePerformans(
     toplamOkuma: genelOkuma,
     toplamFatura: genelFatura,
     okumaOrani: genelAbonePeriod > 0 ? (genelOkuma / genelAbonePeriod) * 100 : 0,
+    okunamayanYuzde: genelAbonePeriod > 0 ? ((genelAbonePeriod - genelOkuma) / genelAbonePeriod) * 100 : 100,
     faturaBasarisi: genelOkuma > 0 ? (genelFatura / genelOkuma) * 100 : 0,
   };
 

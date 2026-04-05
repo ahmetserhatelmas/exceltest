@@ -10,6 +10,12 @@ const xlsxPath = path.join(root, "data", "Veri.xlsx");
 const nufusXlsxPath = path.join(root, "data", "Nufus.xlsx");
 const outPath = path.join(root, "data", "dashboard.json");
 
+/**
+ * Excel verisinin ait olduğu yılı buraya girin.
+ * dashboard.json içine "dataYear" olarak yazılır; Dashboard bu değeri kullanır.
+ */
+const DATA_YEAR = 2025;
+
 const MONTHS_TR = [
   "Ocak",
   "Şubat",
@@ -296,6 +302,7 @@ function main() {
 
   const payload = {
     generatedAt: new Date().toISOString(),
+    dataYear: DATA_YEAR,
     nufusKaynak: nufusSourceLabel,
     months: MONTHS_TR,
     ilceler,
