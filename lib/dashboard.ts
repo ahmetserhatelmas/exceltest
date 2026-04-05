@@ -197,31 +197,38 @@ export type IlcePerformansSatiri = {
   ilce: string;
   toplamAbone: number;
   toplamOkuma: number;
+  toplamFatura: number;
   toplamM3: number;
-  /** Dönem toplam M³ / toplam okunabilir abone */
-  ortalamaM3PerAbone: number;
-  /** Σ okuma / Σ abone (sayaç okuma / okunabilir abone) */
-  okumaBolumAbone: number;
-  /** (Σ abone − Σ okuma) / Σ abone × 100; okuma > abone ise negatif olabilir */
-  okunamayanYuzde: number;
-  /** Okuma/abone oranına göre azalan sıra; 1 = en yüksek oran */
+  /** Okuma / Abone × 100 (tek ay için anlamlı oran) */
+  okumaOrani: number;
+  /** Fatura / Okuma × 100 (faturalama başarısı) */
+  faturaBasarisi: number;
+  /** Okuma oranına göre azalan sıra; 1 = en yüksek */
   basariSirasi: number;
+};
+
+export type IlcePerformansToplam = {
+  toplamAbone: number;
+  toplamOkuma: number;
+  toplamFatura: number;
+  okumaOrani: number;
+  faturaBasarisi: number;
 };
 
 export function computeIlcePerformans(
   records: DashboardRecord[],
   mod: IlcePerformansMod
-): IlcePerformansSatiri[] {
+): { satirlar: IlcePerformansSatiri[]; toplam: IlcePerformansToplam } {
   const acc = new Map<
     string,
-    { abone: number; okuma: number; m3: number }
+    { abone: number; okuma: number; fatura: number; m3: number }
   >();
 
   for (const r of records) {
     const ilce = r.ilce?.trim();
     if (!ilce) continue;
     if (!acc.has(ilce)) {
-      acc.set(ilce, { abone: 0, okuma: 0, m3: 0 });
+      acc.set(ilce, { abone: 0, okuma: 0, fatura: 0, m3: 0 });
     }
     const b = acc.get(ilce)!;
     b.abone += r.abone;
@@ -230,36 +237,55 @@ export function computeIlcePerformans(
       for (let i = 0; i < 12; i++) {
         const c = r.monthly[i];
         if (c?.okuma != null) b.okuma += c.okuma;
+        if (c?.fatura != null) b.fatura += c.fatura;
         if (c?.m3 != null) b.m3 += c.m3;
       }
     } else {
       const c = r.monthly[mod.ayIndeks];
       if (c?.okuma != null) b.okuma += c.okuma;
+      if (c?.fatura != null) b.fatura += c.fatura;
       if (c?.m3 != null) b.m3 += c.m3;
     }
   }
 
+  const ayCount = mod.tur === "yillik" ? 12 : 1;
+
   const satirlar: IlcePerformansSatiri[] = [];
+  let genelAbone = 0;
+  let genelOkuma = 0;
+  let genelFatura = 0;
+
   for (const [ilce, v] of acc) {
     if (v.abone <= 0) continue;
-    const ortalamaM3PerAbone = v.m3 / v.abone;
-    const okumaBolumAbone = v.okuma / v.abone;
-    const okunamayanYuzde = ((v.abone - v.okuma) / v.abone) * 100;
+    const abonePeriod = v.abone * ayCount;
+    const okumaOrani = abonePeriod > 0 ? (v.okuma / abonePeriod) * 100 : 0;
+    const faturaBasarisi = v.okuma > 0 ? (v.fatura / v.okuma) * 100 : 0;
     satirlar.push({
       ilce,
       toplamAbone: v.abone,
       toplamOkuma: v.okuma,
+      toplamFatura: v.fatura,
       toplamM3: v.m3,
-      ortalamaM3PerAbone,
-      okumaBolumAbone,
-      okunamayanYuzde,
+      okumaOrani,
+      faturaBasarisi,
       basariSirasi: 0,
     });
+    genelAbone += v.abone;
+    genelOkuma += v.okuma;
+    genelFatura += v.fatura;
   }
 
-  satirlar.sort((a, b) => b.okumaBolumAbone - a.okumaBolumAbone);
-  return satirlar.map((row, i) => ({
-    ...row,
-    basariSirasi: i + 1,
-  }));
+  satirlar.sort((a, b) => b.okumaOrani - a.okumaOrani);
+  const sorted = satirlar.map((row, i) => ({ ...row, basariSirasi: i + 1 }));
+
+  const genelAbonePeriod = genelAbone * ayCount;
+  const toplam: IlcePerformansToplam = {
+    toplamAbone: genelAbone,
+    toplamOkuma: genelOkuma,
+    toplamFatura: genelFatura,
+    okumaOrani: genelAbonePeriod > 0 ? (genelOkuma / genelAbonePeriod) * 100 : 0,
+    faturaBasarisi: genelOkuma > 0 ? (genelFatura / genelOkuma) * 100 : 0,
+  };
+
+  return { satirlar: sorted, toplam };
 }
