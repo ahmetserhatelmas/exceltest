@@ -105,6 +105,23 @@ export default function Dashboard({ data }: Props) {
     [agg, isYearly, monthIndex]
   );
 
+  /**
+   * Gösterilecek nüfus:
+   *  - Filtre yok   → Nufus.xlsx toplam (eşleşmeden bağımsız)
+   *  - İlçe filtresi → Nufus.xlsx ilçe toplamı
+   *  - Mahalle filtresi → Veri.xlsx eşleşmesinden (mevcut davranış)
+   */
+  const displayNufus = useMemo((): number | null => {
+    if (!ilce) return data.nufusToplam ?? (kpi.hasNufusData ? kpi.totalNufus : null);
+    if (!mahalle) return data.nufusIlceToplam?.[ilce] ?? (kpi.hasNufusData ? kpi.totalNufus : null);
+    return kpi.hasNufusData ? kpi.totalNufus : null;
+  }, [ilce, mahalle, data.nufusToplam, data.nufusIlceToplam, kpi.hasNufusData, kpi.totalNufus]);
+
+  const displayAboneNufusYuzde = useMemo((): number | null => {
+    if (displayNufus == null || displayNufus <= 0) return null;
+    return (kpi.totalAbone / displayNufus) * 100;
+  }, [displayNufus, kpi.totalAbone]);
+
   const axisTick = {
     fill: "var(--chart-tick)",
     fontSize: 12,
@@ -273,8 +290,8 @@ export default function Dashboard({ data }: Props) {
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
             <KpiCard
               title="Toplam nüfus"
-              subtitle={kpi.hasNufusData ? "benzersiz mahalle" : "eşleşme yok"}
-              value={kpi.hasNufusData ? nf0.format(kpi.totalNufus) : "—"}
+              subtitle={displayNufus != null ? (mahalle ? "eşleşen mahalle" : "Nufus.xlsx") : "eşleşme yok"}
+              value={displayNufus != null ? nf0.format(displayNufus) : "—"}
             />
             <KpiCard
               title="Toplam abone"
@@ -296,10 +313,10 @@ export default function Dashboard({ data }: Props) {
             />
             <KpiCard
               title="Abone / nüfus"
-              subtitle={kpi.hasNufusData ? "yüzde" : "eşleşme yok"}
+              subtitle={displayAboneNufusYuzde != null ? "yüzde" : "eşleşme yok"}
               value={
-                kpi.aboneNufusYuzde != null
-                  ? `% ${nf.format(kpi.aboneNufusYuzde)}`
+                displayAboneNufusYuzde != null
+                  ? `% ${nf.format(displayAboneNufusYuzde)}`
                   : "—"
               }
             />

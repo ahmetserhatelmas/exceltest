@@ -43,6 +43,10 @@ export type DashboardPayload = {
   dataYear?: number;
   /** Örn. "Nufus.xlsx (Sheet1)" */
   nufusKaynak?: string;
+  /** Nufus.xlsx tüm satırları toplamı (eşleşmeden bağımsız) */
+  nufusToplam?: number;
+  /** Nufus.xlsx ilçe bazlı nüfus toplamları (Veri.xlsx ilçe adı → nüfus) */
+  nufusIlceToplam?: Record<string, number>;
   months: string[];
   ilceler: string[];
   mahalleler: Record<string, string[]>;

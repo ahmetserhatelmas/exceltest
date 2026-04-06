@@ -193,6 +193,36 @@ function readNufusMapFromWorkbook(wb, sheetName) {
   return map;
 }
 
+/**
+ * Nufus.xlsx'teki tüm satırları toplayarak;
+ *  - nufusToplam: genel toplam
+ *  - nufusByIlce: ilçe adı (Veri.xlsx normundan) → nüfus toplamı
+ * İlçe adlarını Veri.xlsx kayıtlarıyla eşleştirmek için ilceKeyToName Map'i kullanılır.
+ */
+function computeNufusTotals(wb, sheetName, ilceKeyToName) {
+  const ws = wb.Sheets[sheetName];
+  if (!ws) return { toplam: 0, byIlce: {} };
+  const rows = XLSX.utils.sheet_to_json(ws, {
+    header: 1,
+    defval: null,
+    raw: true,
+  });
+  let toplam = 0;
+  const byIlce = {};
+  for (let i = 1; i < rows.length; i++) {
+    const r = rows[i];
+    if (!r || r.length < 4) continue;
+    const ilce = r[2];
+    const nufus = num(r[3]);
+    if (typeof ilce !== "string" || nufus == null) continue;
+    const key = asciiFoldTr(normKey(ilce));
+    const veriIlce = ilceKeyToName.get(key) ?? ilce.trim().toLocaleUpperCase("tr-TR");
+    toplam += nufus;
+    byIlce[veriIlce] = (byIlce[veriIlce] ?? 0) + nufus;
+  }
+  return { toplam, byIlce };
+}
+
 function resolveNufusSheetName(wb) {
   if (wb.SheetNames.includes("Sheet1")) return "Sheet1";
   if (wb.SheetNames.includes("NÜFUS")) return "NÜFUS";
@@ -300,10 +330,31 @@ function main() {
     mahalleler[il] = [...set].sort((a, b) => a.localeCompare(b, "tr-TR"));
   }
 
+  // Nufus.xlsx'ten doğrudan toplam ve ilçe bazlı nüfus hesapla
+  // (Veri.xlsx eşleşmesinden bağımsız, tüm satırlar toplanır)
+  let nufusToplam = 0;
+  let nufusIlceToplam = {};
+  if (fs.existsSync(nufusXlsxPath)) {
+    const nufusWb = XLSX.readFile(nufusXlsxPath, { cellDates: true });
+    const nufusSheet = resolveNufusSheetName(nufusWb);
+    if (nufusSheet) {
+      // Normalize edilmiş ilçe anahtarı → Veri.xlsx'teki gerçek ilçe adı
+      const ilceKeyToName = new Map();
+      for (const r of records) {
+        ilceKeyToName.set(asciiFoldTr(normKey(r.ilce)), r.ilce);
+      }
+      const totals = computeNufusTotals(nufusWb, nufusSheet, ilceKeyToName);
+      nufusToplam = totals.toplam;
+      nufusIlceToplam = totals.byIlce;
+    }
+  }
+
   const payload = {
     generatedAt: new Date().toISOString(),
     dataYear: DATA_YEAR,
     nufusKaynak: nufusSourceLabel,
+    nufusToplam,
+    nufusIlceToplam,
     months: MONTHS_TR,
     ilceler,
     mahalleler,
