@@ -36,8 +36,9 @@ function normKey(s) {
   return s
     .trim()
     .toLocaleLowerCase("tr-TR")
-    .replace(/\s+/g, " ")
-    .replace(/\./g, "");
+    .replace(/\s+/g, "")   // boşlukları kaldır (GAZİ PAŞA ↔ GAZİPAŞA eşleşsin)
+    .replace(/\./g, "")
+    .replace(/-/g, "");    // tire kaldır (ŞEHİT İSHAK- ↔ ŞEHİTİSHAK)
 }
 
 /** Excel'de "MAH.", "MAHALLESİ" ve ASCII/Tr harf farklarını tolere eder (ör. BAGLAR ≈ BAĞLAR). */
@@ -170,6 +171,14 @@ function readKaynakDepoMap(wb) {
   return out;
 }
 
+/**
+ * Nufus.xlsx'te yanlışlıkla eklenmiş / MESKİ hizmet alanı dışındaki satırlar.
+ * Format: "normalize_ilce|normalize_mahalle"
+ */
+const NUFUS_SKIP = new Set([
+  "tarsus|seksenikievler",  // SEKSENİKİ EVLER MAHALLESİ — hizmet dışı
+]);
+
 function readNufusMapFromWorkbook(wb, sheetName) {
   const ws = wb.Sheets[sheetName];
   if (!ws) return new Map();
@@ -188,6 +197,7 @@ function readNufusMapFromWorkbook(wb, sheetName) {
     if (typeof mahalle !== "string" || typeof ilce !== "string" || nufus == null)
       continue;
     const key = nufusLookupKey(ilce, mahalle);
+    if (NUFUS_SKIP.has(key)) continue;
     map.set(key, nufus);
   }
   return map;
@@ -215,8 +225,10 @@ function computeNufusTotals(wb, sheetName, ilceKeyToName) {
     const ilce = r[2];
     const nufus = num(r[3]);
     if (typeof ilce !== "string" || nufus == null) continue;
-    const key = asciiFoldTr(normKey(ilce));
-    const veriIlce = ilceKeyToName.get(key) ?? ilce.trim().toLocaleUpperCase("tr-TR");
+    const key = asciiFoldTr(normKey(ilce)) + "|" + asciiFoldTr(normKey(String(r[1] ?? "")));
+    if (NUFUS_SKIP.has(key)) continue;
+    const ilceK = asciiFoldTr(normKey(ilce));
+    const veriIlce = ilceKeyToName.get(ilceK) ?? ilce.trim().toLocaleUpperCase("tr-TR");
     toplam += nufus;
     byIlce[veriIlce] = (byIlce[veriIlce] ?? 0) + nufus;
   }
