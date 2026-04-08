@@ -571,10 +571,10 @@ export default function Dashboard({ data }: Props) {
                               {r.telefon?.trim() ? r.telefon : "—"}
                             </td>
                             <td className="px-3 py-2 tabular-nums text-zinc-800 dark:text-zinc-200">
-                              {nf0.format(r.abone)}
+                              {r.abone > 0 ? nf0.format(r.abone) : "—"}
                             </td>
                             <td className="px-3 py-2 tabular-nums text-zinc-800 dark:text-zinc-200">
-                              {nf.format(tah)}
+                              {r.abone > 0 ? nf.format(tah) : "—"}
                             </td>
                           </tr>
                         );

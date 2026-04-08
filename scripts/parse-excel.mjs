@@ -304,7 +304,35 @@ function main() {
     if (typeof mahalle !== "string" || typeof ilce !== "string") continue;
 
     const abone = num(r[5]);
-    if (abone == null || abone <= 0) continue;
+    const muhtar = textCell(r[1]);
+    const telefon = textCell(r[2]);
+
+    // Abone yoksa bile muhtar adı girili satırları dahil et (iletişim kaydı)
+    if (abone == null || abone <= 0) {
+      if (!muhtar) continue; // ne abone ne muhtar → atla
+      // Sıfır aboneli iletişim kaydı: aylık veriler yok
+      const lk = nufusLookupKey(ilce, mahalle);
+      const nufus = lookupNufus(nufusMap, lk);
+      const kd = kaynakDepoMap.get(lk) ?? null;
+      const defterNo = num(r[0]);
+      records.push({
+        defterNo: defterNo ?? i,
+        mahalle: mahalle.trim(),
+        ilce: ilce.trim(),
+        muhtar,
+        telefon,
+        abone: 0,
+        nufus,
+        kaynakDepo: kd,
+        monthly: Array.from({ length: 12 }, () => ({
+          okuma: null, fatura: null, m3: null, tahakkuk: null,
+        })),
+      });
+      ilceSet.add(ilce.trim());
+      if (!mahalleByIlce.has(ilce.trim())) mahalleByIlce.set(ilce.trim(), new Set());
+      mahalleByIlce.get(ilce.trim()).add(mahalle.trim());
+      continue;
+    }
 
     const monthly = [];
     for (let m = 0; m < 12; m++) {
@@ -322,8 +350,6 @@ function main() {
     const kd = kaynakDepoMap.get(lk) ?? null;
 
     const defterNo = num(r[0]);
-    const muhtar = textCell(r[1]);
-    const telefon = textCell(r[2]);
 
     records.push({
       defterNo: defterNo ?? i,
