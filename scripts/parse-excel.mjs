@@ -68,6 +68,21 @@ function nufusLookupKey(ilce, mahalle) {
   return `${i}|${m}`;
 }
 
+/**
+ * Veri.xlsx anahtarı → Nufus.xlsx'teki aynı mahallenin anahtarı (farklı resmî yazım).
+ * Örn. Veri "82 EVLER" ↔ Nufus "SEKSENİKİ EVLER MAHALLESİ"
+ */
+const NUFUS_LOOKUP_ALIAS = {
+  "tarsus|82evler": "tarsus|seksenikievler",
+};
+
+function lookupNufus(map, lk) {
+  const direct = map.get(lk);
+  if (direct != null) return direct;
+  const alt = NUFUS_LOOKUP_ALIAS[lk];
+  return alt != null ? map.get(alt) ?? null : null;
+}
+
 function num(v) {
   if (v === null || v === undefined || v === "") return null;
   if (typeof v === "number" && Number.isFinite(v)) return v;
@@ -175,10 +190,6 @@ function readKaynakDepoMap(wb) {
  * Nufus.xlsx'te yanlışlıkla eklenmiş / MESKİ hizmet alanı dışındaki satırlar.
  * Format: "normalize_ilce|normalize_mahalle"
  */
-const NUFUS_SKIP = new Set([
-  "tarsus|seksenikievler",  // SEKSENİKİ EVLER MAHALLESİ — hizmet dışı
-]);
-
 function readNufusMapFromWorkbook(wb, sheetName) {
   const ws = wb.Sheets[sheetName];
   if (!ws) return new Map();
@@ -197,7 +208,6 @@ function readNufusMapFromWorkbook(wb, sheetName) {
     if (typeof mahalle !== "string" || typeof ilce !== "string" || nufus == null)
       continue;
     const key = nufusLookupKey(ilce, mahalle);
-    if (NUFUS_SKIP.has(key)) continue;
     map.set(key, nufus);
   }
   return map;
@@ -225,8 +235,6 @@ function computeNufusTotals(wb, sheetName, ilceKeyToName) {
     const ilce = r[2];
     const nufus = num(r[3]);
     if (typeof ilce !== "string" || nufus == null) continue;
-    const key = asciiFoldTr(normKey(ilce)) + "|" + asciiFoldTr(normKey(String(r[1] ?? "")));
-    if (NUFUS_SKIP.has(key)) continue;
     const ilceK = asciiFoldTr(normKey(ilce));
     const veriIlce = ilceKeyToName.get(ilceK) ?? ilce.trim().toLocaleUpperCase("tr-TR");
     toplam += nufus;
@@ -310,7 +318,7 @@ function main() {
     }
 
     const lk = nufusLookupKey(ilce, mahalle);
-    const nufus = nufusMap.get(lk) ?? null;
+    const nufus = lookupNufus(nufusMap, lk);
     const kd = kaynakDepoMap.get(lk) ?? null;
 
     const defterNo = num(r[0]);
