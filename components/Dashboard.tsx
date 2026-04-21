@@ -821,6 +821,60 @@ export default function Dashboard({ data }: Props) {
                     </tbody>
                   </table>
                 </div>
+
+                <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
+                  <table className="w-full min-w-[980px] border-collapse text-left text-sm">
+                    <thead>
+                      <tr className="border-b border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900/80">
+                        <th className="px-3 py-2 font-semibold text-zinc-700 dark:text-zinc-300">
+                          İlçe
+                        </th>
+                        <th className="px-3 py-2 text-right font-semibold text-zinc-700 dark:text-zinc-300">
+                          Toplam kWh
+                        </th>
+                        <th className="px-3 py-2 text-right font-semibold text-zinc-700 dark:text-zinc-300">
+                          Toplam TL
+                        </th>
+                        <th className="px-3 py-2 text-right font-semibold text-zinc-700 dark:text-zinc-300">
+                          Yağmur kWh
+                        </th>
+                        <th className="px-3 py-2 text-right font-semibold text-zinc-700 dark:text-zinc-300">
+                          Kanalizasyon kWh
+                        </th>
+                        <th className="px-3 py-2 text-right font-semibold text-zinc-700 dark:text-zinc-300">
+                          İçme Suyu kWh
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(elektrik?.ilceDetay ?? []).map((d) => (
+                        <tr
+                          key={d.ilce}
+                          className="border-b border-zinc-100 dark:border-zinc-800/80"
+                        >
+                          <td className="px-3 py-2 font-medium text-zinc-900 dark:text-zinc-100">
+                            {d.ilce}
+                          </td>
+                          <td className="px-3 py-2 text-right tabular-nums text-zinc-800 dark:text-zinc-200">
+                            {nf0.format(d.toplamKwh)}
+                          </td>
+                          <td className="px-3 py-2 text-right tabular-nums text-zinc-800 dark:text-zinc-200">
+                            {nf.format(d.toplamTahakkuk)}
+                          </td>
+                          <td className="px-3 py-2 text-right tabular-nums text-zinc-800 dark:text-zinc-200">
+                            {nf0.format(d.yagmurKwh)}
+                          </td>
+                          <td className="px-3 py-2 text-right tabular-nums text-zinc-800 dark:text-zinc-200">
+                            {nf0.format(d.kanalizasyonKwh)}
+                          </td>
+                          <td className="px-3 py-2 text-right tabular-nums text-zinc-800 dark:text-zinc-200">
+                            {nf0.format(d.icmeKwh)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             )}
             </>

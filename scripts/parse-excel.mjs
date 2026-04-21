@@ -167,14 +167,15 @@ function readAltyapiMap(wb) {
   return out;
 }
 
-function readElektrikSheetSummary(wb, sheetName, label) {
+function readElektrikSheetSummary(wb, sheetName, label, key) {
   const rows = readRows(wb, sheetName);
   if (rows.length < 2) {
-    return { label, totalKwh: 0, totalTahakkuk: 0, count: 0 };
+    return { key, label, totalKwh: 0, totalTahakkuk: 0, count: 0, byIlce: {} };
   }
   const headers = rows[0].map((h) => normKey(h));
   const kwhIdx = [];
   const tlIdx = [];
+  const ilceIdx = headers.findIndex((h) => h.includes("ilce"));
   headers.forEach((h, i) => {
     if (h.includes("kwh")) kwhIdx.push(i);
     if (h.endsWith("tl")) tlIdx.push(i);
@@ -183,14 +184,22 @@ function readElektrikSheetSummary(wb, sheetName, label) {
   let totalKwh = 0;
   let totalTahakkuk = 0;
   let count = 0;
+  const byIlce = {};
   for (let i = 1; i < rows.length; i++) {
     const r = rows[i];
     if (!r) continue;
+    const ilce =
+      ilceIdx >= 0
+        ? textCell(r[ilceIdx]).toLocaleUpperCase("tr-TR")
+        : "BİLİNMİYOR";
     let rowHasData = false;
+    let rowKwh = 0;
+    let rowTl = 0;
     for (const idx of kwhIdx) {
       const v = num(r[idx]);
       if (v != null) {
         totalKwh += v;
+        rowKwh += v;
         rowHasData = true;
       }
     }
@@ -198,13 +207,20 @@ function readElektrikSheetSummary(wb, sheetName, label) {
       const v = num(r[idx]);
       if (v != null) {
         totalTahakkuk += v;
+        rowTl += v;
         rowHasData = true;
       }
     }
-    if (rowHasData) count += 1;
+    if (rowHasData) {
+      count += 1;
+      if (!byIlce[ilce]) byIlce[ilce] = { kwh: 0, tahakkuk: 0, count: 0 };
+      byIlce[ilce].kwh += rowKwh;
+      byIlce[ilce].tahakkuk += rowTl;
+      byIlce[ilce].count += 1;
+    }
   }
 
-  return { label, totalKwh, totalTahakkuk, count };
+  return { key, label, totalKwh, totalTahakkuk, count, byIlce };
 }
 
 function readAboneRecords(wb, nufusMap, altyapiMap) {
@@ -280,14 +296,21 @@ function main() {
     readElektrikSheetSummary(
       wb,
       "YAĞMUR SUYU ELEKTRİK TÜKETİM",
-      "Yagmur Suyu"
+      "Yagmur Suyu",
+      "yagmur"
     ),
     readElektrikSheetSummary(
       wb,
       "KANALİZASYON ELEKTRİK TÜKETİM",
-      "Kanalizasyon"
+      "Kanalizasyon",
+      "kanalizasyon"
     ),
-    readElektrikSheetSummary(wb, "İÇME SUYU ELEKTRİK TÜKETİM", "Icme Suyu"),
+    readElektrikSheetSummary(
+      wb,
+      "İÇME SUYU ELEKTRİK TÜKETİM",
+      "Icme Suyu",
+      "icme"
+    ),
   ];
   const toplamElektrikKwh = elektrikDetay.reduce((s, x) => s + x.totalKwh, 0);
   const toplamElektrikTahakkuk = elektrikDetay.reduce(
@@ -298,6 +321,41 @@ function main() {
     (sum, r) =>
       sum + r.monthly.reduce((mSum, c) => mSum + (c.tahakkuk ?? 0), 0),
     0
+  );
+
+  const elektrikIlceMap = new Map();
+  for (const d of elektrikDetay) {
+    for (const [ilce, v] of Object.entries(d.byIlce)) {
+      if (!elektrikIlceMap.has(ilce)) {
+        elektrikIlceMap.set(ilce, {
+          ilce,
+          toplamKwh: 0,
+          toplamTahakkuk: 0,
+          yagmurKwh: 0,
+          yagmurTahakkuk: 0,
+          kanalizasyonKwh: 0,
+          kanalizasyonTahakkuk: 0,
+          icmeKwh: 0,
+          icmeTahakkuk: 0,
+        });
+      }
+      const row = elektrikIlceMap.get(ilce);
+      row.toplamKwh += v.kwh;
+      row.toplamTahakkuk += v.tahakkuk;
+      if (d.key === "yagmur") {
+        row.yagmurKwh += v.kwh;
+        row.yagmurTahakkuk += v.tahakkuk;
+      } else if (d.key === "kanalizasyon") {
+        row.kanalizasyonKwh += v.kwh;
+        row.kanalizasyonTahakkuk += v.tahakkuk;
+      } else if (d.key === "icme") {
+        row.icmeKwh += v.kwh;
+        row.icmeTahakkuk += v.tahakkuk;
+      }
+    }
+  }
+  const elektrikIlceDetay = [...elektrikIlceMap.values()].sort((a, b) =>
+    a.ilce.localeCompare(b.ilce, "tr-TR")
   );
 
   const payload = {
@@ -317,6 +375,7 @@ function main() {
       toplamSuTahakkuku: toplamSuTahakkuk,
       netGelir: toplamSuTahakkuk - toplamElektrikTahakkuk,
       detay: elektrikDetay,
+      ilceDetay: elektrikIlceDetay,
     },
   };
 

@@ -58,10 +58,23 @@ export type DashboardPayload = {
     toplamSuTahakkuku: number;
     netGelir: number;
     detay: Array<{
+      key: "yagmur" | "kanalizasyon" | "icme";
       label: string;
       totalKwh: number;
       totalTahakkuk: number;
       count: number;
+      byIlce?: Record<string, { kwh: number; tahakkuk: number; count: number }>;
+    }>;
+    ilceDetay?: Array<{
+      ilce: string;
+      toplamKwh: number;
+      toplamTahakkuk: number;
+      yagmurKwh: number;
+      yagmurTahakkuk: number;
+      kanalizasyonKwh: number;
+      kanalizasyonTahakkuk: number;
+      icmeKwh: number;
+      icmeTahakkuk: number;
     }>;
   };
 };
