@@ -6,7 +6,7 @@
     "data": "node scripts/parse-excel.mjs",
     "sync:supabase": "node scripts/sync-supabase.mjs",
     "dev": "next dev",
-    "prebuild": "npm run data",
+    "prebuild": "node scripts/prebuild-data.mjs",
     "build": "next build",
     "start": "next start",
     "lint": "eslint"
