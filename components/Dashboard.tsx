@@ -54,13 +54,14 @@ function legendFormatter(value: string) {
   return <span style={{ color: "var(--chart-tick)" }}>{value}</span>;
 }
 
-type SectionId = "ozet" | "muhtar" | "altyapi" | "ilce";
+type SectionId = "ozet" | "muhtar" | "altyapi" | "ilce" | "elektrik";
 
 const NAV_SECTIONS: { id: SectionId; label: string }[] = [
   { id: "ozet", label: "Özet" },
   { id: "muhtar", label: "Muhtar İletişim" },
   { id: "altyapi", label: "Su Altyapı Envanteri" },
   { id: "ilce", label: "İlçe Bazlı Okuma" },
+  { id: "elektrik", label: "Elektrik Özeti" },
 ];
 
 type Props = { data: DashboardPayload };
@@ -188,6 +189,7 @@ export default function Dashboard({ data }: Props) {
   const selectedMonthLabel = isYearly
     ? "Tümü (Yıllık)"
     : (data.months[monthIndex] ?? `Ay ${monthIndex + 1}`);
+  const elektrik = data.elektrik;
 
   const selectCls =
     "rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-sm text-zinc-900 disabled:opacity-50 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100";
@@ -287,7 +289,7 @@ export default function Dashboard({ data }: Props) {
       {/* ── KPI ŞERİDİ — her bölümde sabit ── */}
       <div className="border-b border-zinc-200 bg-white px-6 py-4 dark:border-zinc-800 dark:bg-zinc-950">
         {hasDataForYear ? (
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-8">
             <KpiCard
               title="Toplam nüfus"
               subtitle={displayNufus != null ? (mahalle ? "eşleşen mahalle" : "Nufus.xlsx") : "eşleşme yok"}
@@ -324,6 +326,20 @@ export default function Dashboard({ data }: Props) {
               title="M³ / abone"
               subtitle={isYearly ? "yıllık toplam" : selectedMonthLabel}
               value={kpi.m3PerAbone != null ? nf.format(kpi.m3PerAbone) : "—"}
+            />
+            <KpiCard
+              title="Toplam elektrik tah."
+              subtitle="yıllık (TL)"
+              value={
+                elektrik ? `${nf.format(elektrik.toplamElektrikTahakkuku)} ₺` : "—"
+              }
+              valueCompact
+            />
+            <KpiCard
+              title="Net gelir"
+              subtitle="su tah. - elektrik tah."
+              value={elektrik ? `${nf.format(elektrik.netGelir)} ₺` : "—"}
+              valueCompact
             />
           </div>
         ) : (
@@ -544,7 +560,7 @@ export default function Dashboard({ data }: Props) {
                       </tr>
                     </thead>
                     <tbody>
-                      {defterSatirlari.map((r) => {
+                      {defterSatirlari.map((r, idx) => {
                           const tah = recordTahakkukDönem(
                             r,
                             isYearly ? "yillik" : "aylik",
@@ -552,7 +568,7 @@ export default function Dashboard({ data }: Props) {
                           );
                         return (
                           <tr
-                            key={`${r.defterNo}-${r.ilce}-${r.mahalle}`}
+                            key={`${r.defterNo}-${r.ilce}-${r.mahalle}-${idx}`}
                             className="border-b border-zinc-100 hover:bg-zinc-50 dark:border-zinc-800/80 dark:hover:bg-zinc-900/50"
                           >
                             <td className="px-3 py-2 tabular-nums text-zinc-600 dark:text-zinc-400">
@@ -722,6 +738,87 @@ export default function Dashboard({ data }: Props) {
                         toplam={ilcePerformansResult.toplam}
                       />
                     </tfoot>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {/* ── ELEKTRİK ÖZETİ ── */}
+            {activeSection === "elektrik" && (
+              <div className="flex flex-col gap-4">
+                <p className="text-xs text-zinc-500 dark:text-zinc-500">
+                  Elektrik tüketim/tahakkuk özeti: Yağmur Suyu, Kanalizasyon ve İçme Suyu
+                  elektrik tablolarından hesaplanır.
+                </p>
+
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                  <MiniKpi
+                    label="Toplam Elektrik Tüketimi"
+                    value={
+                      elektrik
+                        ? `${nf0.format(elektrik.toplamElektrikTuketimiKwh)} kWh`
+                        : "—"
+                    }
+                  />
+                  <MiniKpi
+                    label="Toplam Elektrik Tahakkuku"
+                    value={
+                      elektrik
+                        ? `${nf.format(elektrik.toplamElektrikTahakkuku)} ₺`
+                        : "—"
+                    }
+                  />
+                  <MiniKpi
+                    label="Toplam Su Tahakkuku"
+                    value={
+                      elektrik ? `${nf.format(elektrik.toplamSuTahakkuku)} ₺` : "—"
+                    }
+                  />
+                  <MiniKpi
+                    label="Net Gelir"
+                    value={elektrik ? `${nf.format(elektrik.netGelir)} ₺` : "—"}
+                  />
+                </div>
+
+                <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
+                  <table className="w-full min-w-[760px] border-collapse text-left text-sm">
+                    <thead>
+                      <tr className="border-b border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900/80">
+                        <th className="px-3 py-2 font-semibold text-zinc-700 dark:text-zinc-300">
+                          Birim
+                        </th>
+                        <th className="px-3 py-2 text-right font-semibold text-zinc-700 dark:text-zinc-300">
+                          Elektrik Tüketimi (kWh)
+                        </th>
+                        <th className="px-3 py-2 text-right font-semibold text-zinc-700 dark:text-zinc-300">
+                          Elektrik Tahakkuku (TL)
+                        </th>
+                        <th className="px-3 py-2 text-right font-semibold text-zinc-700 dark:text-zinc-300">
+                          Kayıt Sayısı
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(elektrik?.detay ?? []).map((d) => (
+                        <tr
+                          key={d.label}
+                          className="border-b border-zinc-100 dark:border-zinc-800/80"
+                        >
+                          <td className="px-3 py-2 font-medium text-zinc-900 dark:text-zinc-100">
+                            {d.label}
+                          </td>
+                          <td className="px-3 py-2 text-right tabular-nums text-zinc-800 dark:text-zinc-200">
+                            {nf0.format(d.totalKwh)}
+                          </td>
+                          <td className="px-3 py-2 text-right tabular-nums text-zinc-800 dark:text-zinc-200">
+                            {nf.format(d.totalTahakkuk)}
+                          </td>
+                          <td className="px-3 py-2 text-right tabular-nums text-zinc-800 dark:text-zinc-200">
+                            {nf0.format(d.count)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
                   </table>
                 </div>
               </div>

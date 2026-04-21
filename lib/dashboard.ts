@@ -41,6 +41,7 @@ export type DashboardPayload = {
   generatedAt: string;
   /** Excel verisinin ait olduğu yıl (ör. 2025) */
   dataYear?: number;
+  sourceFile?: string;
   /** Örn. "Nufus.xlsx (Sheet1)" */
   nufusKaynak?: string;
   /** Nufus.xlsx tüm satırları toplamı (eşleşmeden bağımsız) */
@@ -51,6 +52,18 @@ export type DashboardPayload = {
   ilceler: string[];
   mahalleler: Record<string, string[]>;
   records: DashboardRecord[];
+  elektrik?: {
+    toplamElektrikTuketimiKwh: number;
+    toplamElektrikTahakkuku: number;
+    toplamSuTahakkuku: number;
+    netGelir: number;
+    detay: Array<{
+      label: string;
+      totalKwh: number;
+      totalTahakkuk: number;
+      count: number;
+    }>;
+  };
 };
 
 export type MonthlyTotals = {

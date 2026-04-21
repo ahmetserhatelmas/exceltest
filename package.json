@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "data": "node scripts/parse-excel.mjs",
+    "sync:supabase": "node scripts/sync-supabase.mjs",
     "dev": "next dev",
     "prebuild": "npm run data",
     "build": "next build",
@@ -11,6 +12,7 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.104.0",
     "next": "16.2.2",
     "react": "19.2.4",
     "react-dom": "19.2.4",
