@@ -36,6 +36,19 @@ function num(v) {
   return null;
 }
 
+/** Metre gibi tam sayı hücreleri (Excel metin: "1,390,226") */
+function numMetre(v) {
+  if (v === null || v === undefined || v === "") return null;
+  if (typeof v === "number" && Number.isFinite(v)) return Math.round(v);
+  if (typeof v === "string") {
+    const t = v.trim().replace(/\s/g, "").replace(/₺/g, "");
+    if (!t || t === "-") return null;
+    const n = Number(t.replace(/\./g, "").replace(/,/g, ""));
+    return Number.isFinite(n) ? Math.round(n) : null;
+  }
+  return null;
+}
+
 function textCell(v) {
   if (v == null) return "";
   return String(v).trim();
@@ -175,7 +188,13 @@ function readElektrikSheetSummary(wb, sheetName, label, key) {
   const headers = rows[0].map((h) => normKey(h));
   const kwhIdx = [];
   const tlIdx = [];
-  const ilceIdx = headers.findIndex((h) => h.includes("ilce"));
+  let ilceIdx = headers.findIndex((h) => h === "ilçe");
+  if (ilceIdx < 0) {
+    ilceIdx = headers.findIndex((h) => {
+      if (!h.includes("ilçe")) return false;
+      return !h.includes("enerji");
+    });
+  }
   headers.forEach((h, i) => {
     if (h.includes("kwh")) kwhIdx.push(i);
     if (h.endsWith("tl")) tlIdx.push(i);
@@ -188,10 +207,9 @@ function readElektrikSheetSummary(wb, sheetName, label, key) {
   for (let i = 1; i < rows.length; i++) {
     const r = rows[i];
     if (!r) continue;
-    const ilce =
-      ilceIdx >= 0
-        ? textCell(r[ilceIdx]).toLocaleUpperCase("tr-TR")
-        : "BİLİNMİYOR";
+    const ilceRaw =
+      ilceIdx >= 0 ? textCell(r[ilceIdx]).toLocaleUpperCase("tr-TR") : "";
+    const ilce = ilceRaw || "BİLİNMİYOR";
     let rowHasData = false;
     let rowKwh = 0;
     let rowTl = 0;
@@ -221,6 +239,94 @@ function readElektrikSheetSummary(wb, sheetName, label, key) {
   }
 
   return { key, label, totalKwh, totalTahakkuk, count, byIlce };
+}
+
+/** İçme / Kanal / Yağmur hat uzunluğu sayfaları (İLÇE + yıllık İŞLETME/YATIRIM + TOPLAM sütunu) */
+function readHatUzunlukByIlce(wb, sheetName) {
+  const rows = readRows(wb, sheetName);
+  if (rows.length < 3) return {};
+  const h0 = rows[0] ?? [];
+  const h1 = rows[1] ?? [];
+  let toplamCol = -1;
+  for (let j = h0.length - 1; j >= 1; j--) {
+    const cell = h0[j];
+    if (cell == null || cell === "") continue;
+    const fold = asciiFoldTr(normKey(String(cell)));
+    if (fold.includes("toplam")) {
+      toplamCol = j;
+      break;
+    }
+  }
+  if (toplamCol < 0) {
+    const sample = rows[2] ?? [];
+    toplamCol = Math.max(0, sample.length - 1);
+  }
+
+  const out = {};
+  for (let i = 2; i < rows.length; i++) {
+    const r = rows[i];
+    if (!r?.length) continue;
+    const ilceRaw = textCell(r[0]).toLocaleUpperCase("tr-TR");
+    if (!ilceRaw) continue;
+    const foldIlce = asciiFoldTr(normKey(ilceRaw));
+    if (foldIlce.includes("toplam") || foldIlce.includes("genel")) continue;
+
+    const mevcut = numMetre(r[1]);
+    let isletme = 0;
+    let yatirim = 0;
+    for (let j = 2; j < toplamCol; j++) {
+      const lab = textCell(h1[j]).toLocaleUpperCase("tr-TR");
+      const v = numMetre(r[j]);
+      if (v == null) continue;
+      if (lab.includes("İŞLETME") || lab.includes("ISLETME")) isletme += v;
+      else if (lab.includes("YATIRIM")) yatirim += v;
+    }
+    const toplam = numMetre(r[toplamCol]);
+    out[ilceRaw] = { mevcut, isletme, yatirim, toplam };
+  }
+  return out;
+}
+
+function mergeHatUzunlukPayload(icmeByIlce, kanalByIlce, yagmurByIlce) {
+  const ilceSet = new Set([
+    ...Object.keys(icmeByIlce),
+    ...Object.keys(kanalByIlce),
+    ...Object.keys(yagmurByIlce),
+  ]);
+  const ilceler = [...ilceSet].sort((a, b) => a.localeCompare(b, "tr-TR"));
+  const satirlar = ilceler.map((ilce) => ({
+    ilce,
+    icmeSuyu: icmeByIlce[ilce] ?? null,
+    kanalizasyon: kanalByIlce[ilce] ?? null,
+    yagmurSuyu: yagmurByIlce[ilce] ?? null,
+  }));
+
+  const sumToplam = (by) =>
+    Object.values(by).reduce((s, x) => s + (x?.toplam ?? 0), 0);
+  const sumIsletme = (by) =>
+    Object.values(by).reduce((s, x) => s + (x?.isletme ?? 0), 0);
+  const sumYatirim = (by) =>
+    Object.values(by).reduce((s, x) => s + (x?.yatirim ?? 0), 0);
+
+  const kIs = sumIsletme(kanalByIlce);
+  const kYa = sumYatirim(kanalByIlce);
+  const kExt = kIs + kYa;
+
+  return {
+    sheets: {
+      icmeSuyu: "İçme Suyu Hat Uzunluğu",
+      kanalizasyon: "Kanalizasyon Hat Uzunluğu",
+      yagmurSuyu: "Yağmur Suyu Hat Uzunluğu",
+    },
+    ilceler: satirlar,
+    ozet: {
+      icmeSuyuMetre: sumToplam(icmeByIlce),
+      kanalizasyonMetre: sumToplam(kanalByIlce),
+      yagmurSuyuMetre: sumToplam(yagmurByIlce),
+      kanalizasyonIsletmeYuzde: kExt > 0 ? (kIs / kExt) * 100 : null,
+      kanalizasyonYatirimYuzde: kExt > 0 ? (kYa / kExt) * 100 : null,
+    },
+  };
 }
 
 function readAboneRecords(wb, nufusMap, altyapiMap) {
@@ -358,6 +464,11 @@ function main() {
     a.ilce.localeCompare(b.ilce, "tr-TR")
   );
 
+  const icmeHat = readHatUzunlukByIlce(wb, "İçme Suyu Hat Uzunluğu");
+  const kanalHat = readHatUzunlukByIlce(wb, "Kanalizasyon Hat Uzunluğu");
+  const yagmurHat = readHatUzunlukByIlce(wb, "Yağmur Suyu Hat Uzunluğu");
+  const hatUzunluklari = mergeHatUzunlukPayload(icmeHat, kanalHat, yagmurHat);
+
   const payload = {
     generatedAt: new Date().toISOString(),
     dataYear: DATA_YEAR,
@@ -377,6 +488,7 @@ function main() {
       detay: elektrikDetay,
       ilceDetay: elektrikIlceDetay,
     },
+    hatUzunluklari,
   };
 
   fs.mkdirSync(path.dirname(outPath), { recursive: true });

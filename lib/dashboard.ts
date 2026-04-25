@@ -12,6 +12,13 @@ export type KaynakDepoOzeti = {
   terfi: string;
 };
 
+export type HatUzunlukHucre = {
+  mevcut: number | null;
+  isletme: number;
+  yatirim: number;
+  toplam: number | null;
+};
+
 export type DashboardRecord = {
   defterNo: number;
   mahalle: string;
@@ -76,6 +83,27 @@ export type DashboardPayload = {
       icmeKwh: number;
       icmeTahakkuk: number;
     }>;
+  };
+  /** Excel hat uzunluğu sayfaları (ilçe bazlı metre) */
+  hatUzunluklari?: {
+    sheets: {
+      icmeSuyu: string;
+      kanalizasyon: string;
+      yagmurSuyu: string;
+    };
+    ilceler: Array<{
+      ilce: string;
+      icmeSuyu: HatUzunlukHucre | null;
+      kanalizasyon: HatUzunlukHucre | null;
+      yagmurSuyu: HatUzunlukHucre | null;
+    }>;
+    ozet: {
+      icmeSuyuMetre: number;
+      kanalizasyonMetre: number;
+      yagmurSuyuMetre: number;
+      kanalizasyonIsletmeYuzde: number | null;
+      kanalizasyonYatirimYuzde: number | null;
+    };
   };
 };
 

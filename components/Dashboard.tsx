@@ -32,6 +32,24 @@ const nf1 = new Intl.NumberFormat("tr-TR", {
   minimumFractionDigits: 1,
 });
 
+function formatMetreCell(v: number | null | undefined) {
+  if (v == null || !Number.isFinite(v)) return "—";
+  return nf0.format(v);
+}
+
+/** Kanalizasyon satırında yıllık eklemeler içinde işletme / yatırım payı */
+function kanalIsletmeYatirimYuzde(
+  h: { isletme: number; yatirim: number } | null | undefined
+): { isletme: number | null; yatirim: number | null } {
+  if (!h) return { isletme: null, yatirim: null };
+  const ext = h.isletme + h.yatirim;
+  if (ext <= 0) return { isletme: null, yatirim: null };
+  return {
+    isletme: (h.isletme / ext) * 100,
+    yatirim: (h.yatirim / ext) * 100,
+  };
+}
+
 const chartMargin = { top: 8, right: 12, left: 22, bottom: 8 } as const;
 const yAxisWidth = 108;
 
@@ -54,12 +72,13 @@ function legendFormatter(value: string) {
   return <span style={{ color: "var(--chart-tick)" }}>{value}</span>;
 }
 
-type SectionId = "ozet" | "muhtar" | "altyapi" | "ilce" | "elektrik";
+type SectionId = "ozet" | "muhtar" | "altyapi" | "hatlar" | "ilce" | "elektrik";
 
 const NAV_SECTIONS: { id: SectionId; label: string }[] = [
   { id: "ozet", label: "Özet" },
   { id: "muhtar", label: "Muhtar İletişim" },
   { id: "altyapi", label: "Su Altyapı Envanteri" },
+  { id: "hatlar", label: "Altyapı Hatları" },
   { id: "ilce", label: "İlçe Bazlı Okuma" },
   { id: "elektrik", label: "Elektrik Özeti" },
 ];
@@ -190,6 +209,7 @@ export default function Dashboard({ data }: Props) {
     ? "Tümü (Yıllık)"
     : (data.months[monthIndex] ?? `Ay ${monthIndex + 1}`);
   const elektrik = data.elektrik;
+  const hatUzunluklari = data.hatUzunluklari;
 
   const selectCls =
     "rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-sm text-zinc-900 disabled:opacity-50 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100";
@@ -663,6 +683,121 @@ export default function Dashboard({ data }: Props) {
                     </p>
                   )}
                 </div>
+              </div>
+            )}
+
+            {/* ── ALTYAPI HAT UZUNLUKLARI ── */}
+            {activeSection === "hatlar" && (
+              <div className="flex flex-col gap-4">
+                {!hatUzunluklari ? (
+                  <p className="text-sm text-zinc-500 dark:text-zinc-500">
+                    Hat uzunluğu verisi bulunamadı. Excel&apos;de{" "}
+                    <strong>İçme Suyu / Kanalizasyon / Yağmur Suyu Hat Uzunluğu</strong>{" "}
+                    sayfaları ve <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">npm run data</code>{" "}
+                    gerekir.
+                  </p>
+                ) : (
+                  <>
+                    <p className="text-xs text-zinc-500 dark:text-zinc-500">
+                      Kaynak:{" "}
+                      <strong>{hatUzunluklari.sheets.icmeSuyu}</strong>,{" "}
+                      <strong>{hatUzunluklari.sheets.kanalizasyon}</strong>,{" "}
+                      <strong>{hatUzunluklari.sheets.yagmurSuyu}</strong>. Toplam sütunu
+                      Excel&apos;deki ilçe toplamıdır; işletme/yatırım yüzdeleri yıllık
+                      eklemeler içindeki paydır.
+                    </p>
+                    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+                      <MiniKpi
+                        label="İçme suyu hatı (toplam)"
+                        value={`${formatMetreCell(hatUzunluklari.ozet.icmeSuyuMetre)} m`}
+                      />
+                      <MiniKpi
+                        label="Kanalizasyon hatı (toplam)"
+                        value={`${formatMetreCell(hatUzunluklari.ozet.kanalizasyonMetre)} m`}
+                      />
+                      <MiniKpi
+                        label="Yağmur suyu hatı (toplam)"
+                        value={`${formatMetreCell(hatUzunluklari.ozet.yagmurSuyuMetre)} m`}
+                      />
+                      <MiniKpi
+                        label="Kanal · işletme payı"
+                        value={
+                          hatUzunluklari.ozet.kanalizasyonIsletmeYuzde != null
+                            ? `% ${nf1.format(hatUzunluklari.ozet.kanalizasyonIsletmeYuzde)}`
+                            : "—"
+                        }
+                      />
+                      <MiniKpi
+                        label="Kanal · yatırım payı"
+                        value={
+                          hatUzunluklari.ozet.kanalizasyonYatirimYuzde != null
+                            ? `% ${nf1.format(hatUzunluklari.ozet.kanalizasyonYatirimYuzde)}`
+                            : "—"
+                        }
+                      />
+                    </div>
+                    <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
+                      <table className="w-full min-w-[920px] border-collapse text-left text-sm">
+                        <thead>
+                          <tr className="border-b border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900/80">
+                            <th className="px-3 py-2 font-semibold text-zinc-700 dark:text-zinc-300">
+                              İlçe
+                            </th>
+                            <th className="px-3 py-2 text-right font-semibold text-zinc-700 dark:text-zinc-300">
+                              İçme suyu (m)
+                            </th>
+                            <th className="px-3 py-2 text-right font-semibold text-zinc-700 dark:text-zinc-300">
+                              Kanalizasyon (m)
+                            </th>
+                            <th className="px-3 py-2 text-right font-semibold text-zinc-700 dark:text-zinc-300">
+                              Kanal işletme %
+                            </th>
+                            <th className="px-3 py-2 text-right font-semibold text-zinc-700 dark:text-zinc-300">
+                              Kanal yatırım %
+                            </th>
+                            <th className="px-3 py-2 text-right font-semibold text-zinc-700 dark:text-zinc-300">
+                              Yağmur suyu (m)
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {hatUzunluklari.ilceler.map((row) => {
+                            const kyz = kanalIsletmeYatirimYuzde(row.kanalizasyon);
+                            return (
+                              <tr
+                                key={row.ilce}
+                                className="border-b border-zinc-100 dark:border-zinc-800/80"
+                              >
+                                <td className="px-3 py-2 font-medium text-zinc-800 dark:text-zinc-200">
+                                  {row.ilce}
+                                </td>
+                                <td className="px-3 py-2 text-right tabular-nums text-zinc-800 dark:text-zinc-200">
+                                  {formatMetreCell(row.icmeSuyu?.toplam ?? null)}
+                                </td>
+                                <td className="px-3 py-2 text-right tabular-nums text-zinc-800 dark:text-zinc-200">
+                                  {formatMetreCell(row.kanalizasyon?.toplam ?? null)}
+                                </td>
+                                <td className="px-3 py-2 text-right tabular-nums text-zinc-800 dark:text-zinc-200">
+                                  {kyz.isletme != null
+                                    ? `% ${nf1.format(kyz.isletme)}`
+                                    : "—"}
+                                </td>
+                                <td className="px-3 py-2 text-right tabular-nums text-zinc-800 dark:text-zinc-200">
+                                  {kyz.yatirim != null
+                                    ? `% ${nf1.format(kyz.yatirim)}`
+                                    : "—"}
+                                </td>
+                                <td className="px-3 py-2 text-right tabular-nums text-zinc-800 dark:text-zinc-200">
+                                  {formatMetreCell(row.yagmurSuyu?.toplam ?? null)}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </>
+                )}
               </div>
             )}
 
