@@ -6,7 +6,7 @@ import XLSX from "xlsx";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(__dirname, "..");
 const xlsxPath =
-  process.env.EXCEL_SOURCE_PATH ?? path.join(root, "data", "Veri son.xlsx");
+  process.env.EXCEL_SOURCE_PATH ?? path.join(root, "data", "Veri son (2).xlsx");
 const outPath = path.join(root, "data", "dashboard.json");
 const DATA_YEAR = Number(process.env.DATA_YEAR ?? "2025");
 const MONTHS_TR = [

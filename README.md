@@ -2,7 +2,7 @@
 
 Next.js su tüketimi panosu.
 
-Veri kaynağı: `Veri son.xlsx` (default: `/Users/ase/Downloads/Veri son.xlsx`).
+Veri kaynağı: `Veri son (2).xlsx` (varsayılan: `data/Veri son (2).xlsx`; yerel için `EXCEL_SOURCE_PATH` ile Downloads yolu da kullanılabilir).
 `npm run data` ile Excel'den `data/dashboard.json` üretilir.
 İsteğe bağlı olarak `npm run sync:supabase` ile payload Supabase'e yazılır.
 
@@ -22,7 +22,7 @@ npm run dev    # http://localhost:3000
 SUPABASE_URL=...
 SUPABASE_ANON_KEY=...
 SUPABASE_SERVICE_ROLE_KEY=...
-EXCEL_SOURCE_PATH=/Users/ase/Downloads/Veri son.xlsx
+EXCEL_SOURCE_PATH=/Users/ase/Downloads/Veri son (2).xlsx
 DATA_YEAR=2025
 ```
 

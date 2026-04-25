@@ -5,7 +5,7 @@ import { spawnSync } from "node:child_process";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(__dirname, "..");
-const defaultExcelPath = path.join(root, "data", "Veri son.xlsx");
+const defaultExcelPath = path.join(root, "data", "Veri son (2).xlsx");
 const excelPath = process.env.EXCEL_SOURCE_PATH ?? defaultExcelPath;
 const dashboardPath = path.join(root, "data", "dashboard.json");
 

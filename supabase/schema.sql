@@ -1,7 +1,7 @@
 create table if not exists public.dashboard_payloads (
   id bigserial primary key,
   data_year integer not null unique,
-  source_file text not null default 'Veri son.xlsx',
+  source_file text not null default 'Veri son (2).xlsx',
   payload jsonb not null,
   generated_at timestamptz not null default now(),
   updated_at timestamptz not null default now()

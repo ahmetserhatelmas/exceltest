@@ -31,7 +31,7 @@ async function main() {
 
   const payload = readPayload();
   const dataYear = Number(payload.dataYear ?? new Date().getFullYear());
-  const sourceFile = String(payload.sourceFile ?? "Veri son.xlsx");
+  const sourceFile = String(payload.sourceFile ?? "Veri son (2).xlsx");
 
   const supabase = createClient(supabaseUrl, serviceRoleKey, {
     auth: { persistSession: false },
