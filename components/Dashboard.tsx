@@ -32,10 +32,12 @@ function hatSatirOzeti(
 }
 import {
   aggregate,
+  aggregateKanalHatVarYok,
   collectKaynakDepoSummary,
   computeIlcePerformans,
   elektrikDetayDonemToplam,
   elektrikDetayIlceDonem,
+  elektrikDetayKonumDonem,
   filterRecords,
   hatHucreTumYillarOzeti,
   hatHucreYilOzeti,
@@ -235,20 +237,6 @@ export default function Dashboard({ data }: Props) {
   const hatUzunluklari = data.hatUzunluklari;
   const hatMevcutKovasiYili = data.hatUzunluklari?.mevcutKovasiYili ?? null;
 
-  /**
-   * Elektrik Excel ilçe bazlı; mahalle seçiliyken ilçe içindeki abone oranına göre
-   * yaklaşık pay (özetteki ilçe+mahalle filtresiyle uyum).
-   */
-  const elektrikMahalleOrani = useMemo(() => {
-    if (!ilce.trim() || !mahalle.trim()) return 1;
-    const ilceAbone = data.records
-      .filter((r) => r.ilce === ilce)
-      .reduce((s, r) => s + r.abone, 0);
-    const mahAbone = filtered.reduce((s, r) => s + r.abone, 0);
-    if (ilceAbone <= 0) return 1;
-    return Math.min(1, Math.max(0, mahAbone / ilceAbone));
-  }, [ilce, mahalle, data.records, filtered]);
-
   /** Elektrik: üst yıl = veri dosyası yılı (dataYear) iken ay/ilçe; plan yılı (2026) henüz boş */
   const elektrikDonem = useMemo(() => {
     const e = data.elektrik;
@@ -276,25 +264,31 @@ export default function Dashboard({ data }: Props) {
         netGelir: null as number | null,
         ilceTablo: [] as Array<{
           ilce: string;
+          mahalle?: string;
           toplamKwh: number;
           toplamTahakkuk: number;
           yagmurKwh: number;
           kanalizasyonKwh: number;
           icmeKwh: number;
         }>,
-        mahalleOrani: elektrikMahalleOrani,
       };
     }
 
     let detayTablo = e.detay.map((d) => {
-      const v = ilce.trim()
-        ? elektrikDetayIlceDonem(d, ilce, isYearly, monthIndex)
-        : elektrikDetayDonemToplam(d, isYearly, monthIndex);
-      const countOut = ilce.trim()
-        ? elektrikDetayIlceDonem(d, ilce, isYearly, monthIndex).count
-        : isYearly
-          ? d.count
-          : null;
+      const v =
+        ilce.trim() && mahalle.trim()
+          ? elektrikDetayKonumDonem(d, ilce, mahalle, isYearly, monthIndex)
+          : ilce.trim()
+            ? elektrikDetayIlceDonem(d, ilce, isYearly, monthIndex)
+            : elektrikDetayDonemToplam(d, isYearly, monthIndex);
+      const countOut =
+        ilce.trim() && mahalle.trim()
+          ? elektrikDetayKonumDonem(d, ilce, mahalle, isYearly, monthIndex).count
+          : ilce.trim()
+            ? elektrikDetayIlceDonem(d, ilce, isYearly, monthIndex).count
+            : isYearly
+              ? d.count
+              : null;
       return {
         key: d.key,
         label: d.label,
@@ -304,49 +298,56 @@ export default function Dashboard({ data }: Props) {
       };
     });
 
-    let toplamKwh = detayTablo.reduce((s, r) => s + r.kwh, 0);
-    let toplamTah = detayTablo.reduce((s, r) => s + r.tahakkuk, 0);
+    const toplamKwh = detayTablo.reduce((s, r) => s + r.kwh, 0);
+    const toplamTah = detayTablo.reduce((s, r) => s + r.tahakkuk, 0);
     const suTah = kpi.totalTahakkuk;
-    let netGelir = suTah - toplamTah;
+    const netGelir = suTah - toplamTah;
 
     const ilceListe = ilce.trim()
       ? [ilce]
       : (e.ilceDetay?.map((r) => r.ilce) ?? data.ilceler);
 
-    let ilceTablo = ilceListe.map((ilceAdi) => {
-      const y = elektrikDetayIlceDonem(yDet, ilceAdi, isYearly, monthIndex);
-      const k = elektrikDetayIlceDonem(kDet, ilceAdi, isYearly, monthIndex);
-      const ic = elektrikDetayIlceDonem(iDet, ilceAdi, isYearly, monthIndex);
-      const ty = y.kwh + k.kwh + ic.kwh;
-      const tt = y.tahakkuk + k.tahakkuk + ic.tahakkuk;
-      return {
-        ilce: ilceAdi,
-        toplamKwh: ty,
-        toplamTahakkuk: tt,
-        yagmurKwh: y.kwh,
-        kanalizasyonKwh: k.kwh,
-        icmeKwh: ic.kwh,
-      };
-    });
+    let ilceTablo: Array<{
+      ilce: string;
+      mahalle?: string;
+      toplamKwh: number;
+      toplamTahakkuk: number;
+      yagmurKwh: number;
+      kanalizasyonKwh: number;
+      icmeKwh: number;
+    }>;
 
-    const oran = elektrikMahalleOrani;
-    if (oran !== 1) {
-      detayTablo = detayTablo.map((r) => ({
-        ...r,
-        kwh: r.kwh * oran,
-        tahakkuk: r.tahakkuk * oran,
-      }));
-      ilceTablo = ilceTablo.map((r) => ({
-        ...r,
-        toplamKwh: r.toplamKwh * oran,
-        toplamTahakkuk: r.toplamTahakkuk * oran,
-        yagmurKwh: r.yagmurKwh * oran,
-        kanalizasyonKwh: r.kanalizasyonKwh * oran,
-        icmeKwh: r.icmeKwh * oran,
-      }));
-      toplamKwh *= oran;
-      toplamTah *= oran;
-      netGelir = suTah - toplamTah;
+    if (ilce.trim() && mahalle.trim()) {
+      const y = elektrikDetayKonumDonem(yDet, ilce, mahalle, isYearly, monthIndex);
+      const k = elektrikDetayKonumDonem(kDet, ilce, mahalle, isYearly, monthIndex);
+      const ic = elektrikDetayKonumDonem(iDet, ilce, mahalle, isYearly, monthIndex);
+      ilceTablo = [
+        {
+          ilce,
+          mahalle,
+          toplamKwh: y.kwh + k.kwh + ic.kwh,
+          toplamTahakkuk: y.tahakkuk + k.tahakkuk + ic.tahakkuk,
+          yagmurKwh: y.kwh,
+          kanalizasyonKwh: k.kwh,
+          icmeKwh: ic.kwh,
+        },
+      ];
+    } else {
+      ilceTablo = ilceListe.map((ilceAdi) => {
+        const y = elektrikDetayIlceDonem(yDet, ilceAdi, isYearly, monthIndex);
+        const k = elektrikDetayIlceDonem(kDet, ilceAdi, isYearly, monthIndex);
+        const ic = elektrikDetayIlceDonem(iDet, ilceAdi, isYearly, monthIndex);
+        const ty = y.kwh + k.kwh + ic.kwh;
+        const tt = y.tahakkuk + k.tahakkuk + ic.tahakkuk;
+        return {
+          ilce: ilceAdi,
+          toplamKwh: ty,
+          toplamTahakkuk: tt,
+          yagmurKwh: y.kwh,
+          kanalizasyonKwh: k.kwh,
+          icmeKwh: ic.kwh,
+        };
+      });
     }
 
     return {
@@ -357,7 +358,6 @@ export default function Dashboard({ data }: Props) {
       suTahakkuku: suTah,
       netGelir,
       ilceTablo,
-      mahalleOrani: oran,
     };
   }, [
     data.elektrik,
@@ -365,10 +365,10 @@ export default function Dashboard({ data }: Props) {
     dataYear,
     selectedYear,
     ilce,
+    mahalle,
     isYearly,
     monthIndex,
     kpi.totalTahakkuk,
-    elektrikMahalleOrani,
   ]);
 
   /** Hat uzunlukları: Excel takvim yılı veya tüm yıllar + ilçe */
@@ -411,6 +411,24 @@ export default function Dashboard({ data }: Props) {
       yagmur: toplaTip((r) => r.yagmurSuyu),
     };
   }, [data.hatUzunluklari, ilce, hatEnvYili]);
+
+  /** Tablo altı: kümülatif sütunları için görünen satırların toplamı */
+  const hatTabloKumToplam = useMemo(() => {
+    if (!hatYilOzet) return null;
+    return hatYilOzet.rows.reduce(
+      (acc, row) => ({
+        ic: acc.ic + (row.icmeSuyu?.toplam ?? 0),
+        ka: acc.ka + (row.kanalizasyon?.toplam ?? 0),
+        ya: acc.ya + (row.yagmurSuyu?.toplam ?? 0),
+      }),
+      { ic: 0, ka: 0, ya: 0 }
+    );
+  }, [hatYilOzet]);
+
+  const kanalVarYokOzet = useMemo(
+    () => aggregateKanalHatVarYok(data.kanalHatVarYok ?? null, ilce, mahalle),
+    [data.kanalHatVarYok, ilce, mahalle]
+  );
 
   const aboneSekmesiBos =
     !hasDataForYear &&
@@ -1019,12 +1037,143 @@ export default function Dashboard({ data }: Props) {
                         />
                       </div>
                     )}
-                    <p className="text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-500">
-                      Kümülatif (Excel &quot;toplam&quot; sütunu, tüm zamanlar): içme{" "}
-                      {formatMetreCell(hatUzunluklari.ozet.icmeSuyuMetre)} m · kanal{" "}
-                      {formatMetreCell(hatUzunluklari.ozet.kanalizasyonMetre)} m · yağmur{" "}
-                      {formatMetreCell(hatUzunluklari.ozet.yagmurSuyuMetre)} m
-                    </p>
+                    <div className="flex flex-col gap-2 rounded-lg border border-zinc-200 bg-zinc-50/80 p-3 dark:border-zinc-800 dark:bg-zinc-900/40">
+                      <p className="text-xs font-medium text-zinc-700 dark:text-zinc-300">
+                        Genel toplam — kümülatif hat (Excel &quot;Toplam&quot; sütunu; tüm
+                        ilçelerin satır toplamları; mevcut hat + yıllık eklemeler)
+                      </p>
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                        <MiniKpi
+                          label="Toplam içme hattı (kümülatif, m)"
+                          value={`${formatMetreCell(hatUzunluklari.ozet.icmeSuyuMetre)} m`}
+                        />
+                        <MiniKpi
+                          label="Toplam kanal hattı (kümülatif, m)"
+                          value={`${formatMetreCell(hatUzunluklari.ozet.kanalizasyonMetre)} m`}
+                        />
+                        <MiniKpi
+                          label="Toplam yağmur hattı (kümülatif, m)"
+                          value={`${formatMetreCell(hatUzunluklari.ozet.yagmurSuyuMetre)} m`}
+                        />
+                      </div>
+                      {ilce.trim() ? (
+                        <p className="text-[11px] text-zinc-500 dark:text-zinc-500">
+                          Üstteki üç değer <strong>tüm ilçeler</strong> içindir. Tablo ve
+                          alttaki <strong>TOPLAM</strong> satırı seçili ilçeyi gösterir.
+                        </p>
+                      ) : null}
+                    </div>
+                    {data.kanalHatVarYok && (
+                      <div className="rounded-lg border border-sky-200 bg-sky-50/90 p-3 dark:border-sky-900/50 dark:bg-sky-950/30">
+                        <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                          Kanalizasyon hattı VAR / YOK — nüfus payı
+                        </h3>
+                        <p className="mt-1 text-[11px] leading-relaxed text-zinc-600 dark:text-zinc-400">
+                          Kaynak: Excel <strong>{data.kanalHatVarYok.sheetLabel}</strong>{" "}
+                          (mahalle satırı, plan nüfus sütunu ve VAR/YOK). Yüzdeler, üstteki
+                          ilçe/mahalle filtresine uyan satırların <strong>nüfus toplamı</strong>{" "}
+                          üzerinden hesaplanır; bu nüfus <strong>NÜFUS</strong> sayfasındaki
+                          TÜİK nüfusundan farklı olabilir.
+                        </p>
+                        {kanalVarYokOzet && kanalVarYokOzet.toplamNufus > 0 ? (
+                          <div className="mt-3 overflow-x-auto">
+                            <table className="w-full min-w-[440px] border-collapse text-left text-sm">
+                              <thead>
+                                <tr className="border-b border-sky-200 dark:border-sky-800">
+                                  <th className="px-2 py-2 font-semibold text-zinc-700 dark:text-zinc-300">
+                                    Durum
+                                  </th>
+                                  <th className="px-2 py-2 text-right font-semibold text-zinc-700 dark:text-zinc-300">
+                                    Nüfus
+                                  </th>
+                                  <th className="px-2 py-2 text-right font-semibold text-zinc-700 dark:text-zinc-300">
+                                    Nüfus %
+                                  </th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                <tr className="border-b border-sky-100 dark:border-sky-900/40">
+                                  <td className="px-2 py-2 text-zinc-800 dark:text-zinc-200">
+                                    VAR
+                                  </td>
+                                  <td className="px-2 py-2 text-right tabular-nums text-zinc-800 dark:text-zinc-200">
+                                    {nf0.format(kanalVarYokOzet.varNufus)}
+                                  </td>
+                                  <td className="px-2 py-2 text-right tabular-nums text-zinc-800 dark:text-zinc-200">
+                                    {kanalVarYokOzet.varYuzde != null
+                                      ? `% ${nf1.format(kanalVarYokOzet.varYuzde)}`
+                                      : "—"}
+                                  </td>
+                                </tr>
+                                <tr className="border-b border-sky-100 dark:border-sky-900/40">
+                                  <td className="px-2 py-2 text-zinc-800 dark:text-zinc-200">
+                                    YOK
+                                  </td>
+                                  <td className="px-2 py-2 text-right tabular-nums text-zinc-800 dark:text-zinc-200">
+                                    {nf0.format(kanalVarYokOzet.yokNufus)}
+                                  </td>
+                                  <td className="px-2 py-2 text-right tabular-nums text-zinc-800 dark:text-zinc-200">
+                                    {kanalVarYokOzet.yokYuzde != null
+                                      ? `% ${nf1.format(kanalVarYokOzet.yokYuzde)}`
+                                      : "—"}
+                                  </td>
+                                </tr>
+                                {kanalVarYokOzet.kismiNufus > 0 ? (
+                                  <tr className="border-b border-sky-100 dark:border-sky-900/40">
+                                    <td className="px-2 py-2 text-zinc-800 dark:text-zinc-200">
+                                      Kısmi
+                                    </td>
+                                    <td className="px-2 py-2 text-right tabular-nums text-zinc-800 dark:text-zinc-200">
+                                      {nf0.format(kanalVarYokOzet.kismiNufus)}
+                                    </td>
+                                    <td className="px-2 py-2 text-right tabular-nums text-zinc-800 dark:text-zinc-200">
+                                      {kanalVarYokOzet.kismiYuzde != null
+                                        ? `% ${nf1.format(kanalVarYokOzet.kismiYuzde)}`
+                                        : "—"}
+                                    </td>
+                                  </tr>
+                                ) : null}
+                                {kanalVarYokOzet.digerNufus > 0 ? (
+                                  <tr className="border-b border-sky-100 dark:border-sky-900/40">
+                                    <td className="px-2 py-2 text-zinc-800 dark:text-zinc-200">
+                                      Diğer etiket
+                                    </td>
+                                    <td className="px-2 py-2 text-right tabular-nums text-zinc-800 dark:text-zinc-200">
+                                      {nf0.format(kanalVarYokOzet.digerNufus)}
+                                    </td>
+                                    <td className="px-2 py-2 text-right tabular-nums text-zinc-800 dark:text-zinc-200">
+                                      {kanalVarYokOzet.digerYuzde != null
+                                        ? `% ${nf1.format(kanalVarYokOzet.digerYuzde)}`
+                                        : "—"}
+                                    </td>
+                                  </tr>
+                                ) : null}
+                              </tbody>
+                              <tfoot>
+                                <tr className="border-t border-sky-300 font-semibold text-zinc-900 dark:border-sky-700 dark:text-zinc-100">
+                                  <td className="px-2 py-2">Toplam</td>
+                                  <td className="px-2 py-2 text-right tabular-nums">
+                                    {nf0.format(kanalVarYokOzet.toplamNufus)}
+                                  </td>
+                                  <td className="px-2 py-2 text-right tabular-nums">
+                                    % 100
+                                  </td>
+                                </tr>
+                              </tfoot>
+                            </table>
+                            <p className="mt-2 text-[11px] text-zinc-500 dark:text-zinc-500">
+                              {kanalVarYokOzet.satirSayisi} satır (mahalle) · Sayfadaki
+                              abone toplamı: {nf0.format(kanalVarYokOzet.toplamAbone)}
+                            </p>
+                          </div>
+                        ) : (
+                          <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-500">
+                            Bu seçim için VAR–YOK tablosunda satır yok veya nüfus
+                            girilmemiş.
+                          </p>
+                        )}
+                      </div>
+                    )}
                     <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
                       <table className="w-full min-w-[1100px] border-collapse text-left text-sm">
                         <thead>
@@ -1147,6 +1296,72 @@ export default function Dashboard({ data }: Props) {
                             );
                           })}
                         </tbody>
+                        {hatYilOzet && hatTabloKumToplam && (
+                          <tfoot>
+                            <tr className="border-t-2 border-zinc-300 bg-zinc-100 font-semibold dark:border-zinc-600 dark:bg-zinc-900">
+                              <td className="px-3 py-2 text-zinc-900 dark:text-zinc-100">
+                                TOPLAM
+                                {ilce.trim() ? (
+                                  <span className="block text-[11px] font-normal text-zinc-500 dark:text-zinc-400">
+                                    (seçili ilçe)
+                                  </span>
+                                ) : (
+                                  <span className="block text-[11px] font-normal text-zinc-500 dark:text-zinc-400">
+                                    (tüm ilçeler)
+                                  </span>
+                                )}
+                              </td>
+                              <td className="px-3 py-2 text-right tabular-nums text-zinc-900 dark:text-zinc-100">
+                                {formatMetreCell(hatYilOzet.icme.ekMetre)}
+                              </td>
+                              <td className="px-3 py-2 text-right tabular-nums text-zinc-900 dark:text-zinc-100">
+                                {hatYilOzet.icme.isletmeYuzde != null
+                                  ? `% ${nf1.format(hatYilOzet.icme.isletmeYuzde)}`
+                                  : "—"}
+                              </td>
+                              <td className="px-3 py-2 text-right tabular-nums text-zinc-900 dark:text-zinc-100">
+                                {hatYilOzet.icme.yatirimYuzde != null
+                                  ? `% ${nf1.format(hatYilOzet.icme.yatirimYuzde)}`
+                                  : "—"}
+                              </td>
+                              <td className="px-3 py-2 text-right tabular-nums text-zinc-900 dark:text-zinc-100">
+                                {formatMetreCell(hatYilOzet.kanal.ekMetre)}
+                              </td>
+                              <td className="px-3 py-2 text-right tabular-nums text-zinc-900 dark:text-zinc-100">
+                                {hatYilOzet.kanal.isletmeYuzde != null
+                                  ? `% ${nf1.format(hatYilOzet.kanal.isletmeYuzde)}`
+                                  : "—"}
+                              </td>
+                              <td className="px-3 py-2 text-right tabular-nums text-zinc-900 dark:text-zinc-100">
+                                {hatYilOzet.kanal.yatirimYuzde != null
+                                  ? `% ${nf1.format(hatYilOzet.kanal.yatirimYuzde)}`
+                                  : "—"}
+                              </td>
+                              <td className="px-3 py-2 text-right tabular-nums text-zinc-900 dark:text-zinc-100">
+                                {formatMetreCell(hatYilOzet.yagmur.ekMetre)}
+                              </td>
+                              <td className="px-3 py-2 text-right tabular-nums text-zinc-900 dark:text-zinc-100">
+                                {hatYilOzet.yagmur.isletmeYuzde != null
+                                  ? `% ${nf1.format(hatYilOzet.yagmur.isletmeYuzde)}`
+                                  : "—"}
+                              </td>
+                              <td className="px-3 py-2 text-right tabular-nums text-zinc-900 dark:text-zinc-100">
+                                {hatYilOzet.yagmur.yatirimYuzde != null
+                                  ? `% ${nf1.format(hatYilOzet.yagmur.yatirimYuzde)}`
+                                  : "—"}
+                              </td>
+                              <td className="px-3 py-2 text-right tabular-nums text-zinc-800 dark:text-zinc-200">
+                                {formatMetreCell(hatTabloKumToplam.ic)}
+                              </td>
+                              <td className="px-3 py-2 text-right tabular-nums text-zinc-800 dark:text-zinc-200">
+                                {formatMetreCell(hatTabloKumToplam.ka)}
+                              </td>
+                              <td className="px-3 py-2 text-right tabular-nums text-zinc-800 dark:text-zinc-200">
+                                {formatMetreCell(hatTabloKumToplam.ya)}
+                              </td>
+                            </tr>
+                          </tfoot>
+                        )}
                       </table>
                     </div>
                   </>
@@ -1239,18 +1454,10 @@ export default function Dashboard({ data }: Props) {
                   sütunlarından gelir; dönem seçimi üstteki <strong>ay</strong> filtresidir.
                   Üstteki <strong>yıl</strong> ({dataYear} / {dataYear + 1}) abone ve su
                   tarafı içindir — elektrik sayfaları şimdilik yalnızca{" "}
-                  <strong>{dataYear}</strong> dosyasındadır. <strong>İlçe</strong> ile
-                  daraltılır. Su tahakkuku ve net gelir, aynı ay ve coğrafi filtredeki
-                  abone tahakkukunu                   kullanır.
-                  {elektrikDonem?.mahalleOrani != null &&
-                    elektrikDonem.mahalleOrani < 1 &&
-                    elektrikDonem.yilOk && (
-                    <span className="block pt-1 text-zinc-600 dark:text-zinc-400">
-                      Mahalle seçili: elektrik değerleri, ilçe içindeki{" "}
-                      <strong>abone oranı</strong> ile yaklaşık paya bölünür (Excel yalnızca
-                      ilçe bazlıdır).
-                    </span>
-                  )}
+                  <strong>{dataYear}</strong> dosyasındadır. Üç elektrik sayfasında{" "}
+                  <strong>İLÇE</strong> ve <strong>MAHALLE</strong> sütunları vardır; üst
+                  filtrelerdeki ilçe/mahalle ile aynı konum satırları toplanır. Su tahakkuku
+                  ve net gelir, aynı ay ve coğrafi filtredeki abone tahakkukunu kullanır.
                   {!elektrikDonem?.yilOk && (
                     <span className="block pt-1 font-medium text-amber-700 dark:text-amber-400">
                       {selectedYear} plan yılı seçili: Excel&apos;e bu yıl için elektrik
@@ -1346,11 +1553,14 @@ export default function Dashboard({ data }: Props) {
                 </div>
 
                 <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
-                  <table className="w-full min-w-[980px] border-collapse text-left text-sm">
+                  <table className="w-full min-w-[1040px] border-collapse text-left text-sm">
                     <thead>
                       <tr className="border-b border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900/80">
                         <th className="px-3 py-2 font-semibold text-zinc-700 dark:text-zinc-300">
                           İlçe
+                        </th>
+                        <th className="px-3 py-2 font-semibold text-zinc-700 dark:text-zinc-300">
+                          Mahalle
                         </th>
                         <th className="px-3 py-2 text-right font-semibold text-zinc-700 dark:text-zinc-300">
                           Toplam kWh
@@ -1373,7 +1583,7 @@ export default function Dashboard({ data }: Props) {
                       {elektrikDonem?.yilOk === false ? (
                         <tr>
                           <td
-                            colSpan={6}
+                            colSpan={7}
                             className="px-3 py-6 text-center text-sm text-zinc-500 dark:text-zinc-400"
                           >
                             İlçe kırılımı için üstte <strong>{dataYear}</strong> yılını
@@ -1384,11 +1594,14 @@ export default function Dashboard({ data }: Props) {
                       ) : (
                         (elektrikDonem?.ilceTablo ?? []).map((d) => (
                           <tr
-                            key={d.ilce}
+                            key={`${d.ilce}-${d.mahalle ?? ""}`}
                             className="border-b border-zinc-100 dark:border-zinc-800/80"
                           >
                             <td className="px-3 py-2 font-medium text-zinc-900 dark:text-zinc-100">
                               {d.ilce}
+                            </td>
+                            <td className="px-3 py-2 text-zinc-800 dark:text-zinc-200">
+                              {d.mahalle?.trim() ? d.mahalle : "—"}
                             </td>
                             <td className="px-3 py-2 text-right tabular-nums text-zinc-800 dark:text-zinc-200">
                               {nf0.format(d.toplamKwh)}

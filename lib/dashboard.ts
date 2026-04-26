@@ -46,6 +46,11 @@ export type ElektrikDetaySatiri = {
     string,
     { count: number; aylik: ElektrikAylikHucre[] }
   > | null;
+  /** mahalleKey(ilce, mahalle) → Excel satır birleşimi (3 elektrik sayfası) */
+  byKonumAylik?: Record<
+    string,
+    { ilce: string; mahalle: string; count: number; aylik: ElektrikAylikHucre[] }
+  > | null;
 };
 
 export type DashboardRecord = {
@@ -131,7 +136,84 @@ export type DashboardPayload = {
       kanalizasyonYatirimYuzde: number | null;
     };
   };
+  /** Excel «Kanalizasyon Hattı VAR-YOK» (plan nüfus + VAR/YOK) */
+  kanalHatVarYok?: {
+    sheetLabel: string;
+    satirlar: KanalHatVarYokSatiri[];
+  };
 };
+
+export type KanalHatVarYokDurum = "var" | "yok" | "kismi" | "diger";
+
+export type KanalHatVarYokSatiri = {
+  ilce: string;
+  mahalle: string;
+  konumKey: string;
+  nufus: number;
+  abone: number | null;
+  durum: KanalHatVarYokDurum;
+};
+
+export type KanalHatVarYokOzet = {
+  satirSayisi: number;
+  toplamNufus: number;
+  toplamAbone: number;
+  varNufus: number;
+  yokNufus: number;
+  kismiNufus: number;
+  digerNufus: number;
+  varYuzde: number | null;
+  yokYuzde: number | null;
+  kismiYuzde: number | null;
+  digerYuzde: number | null;
+};
+
+/**
+ * VAR-YOK sayfasındaki plan nüfusunu üst ilçe/mahalle filtresine göre toplar;
+ * yüzdeler yalnızca bu satırların nüfus toplamına göredir.
+ */
+export function aggregateKanalHatVarYok(
+  blok: { sheetLabel: string; satirlar: KanalHatVarYokSatiri[] } | undefined | null,
+  ilce: string,
+  mahalle: string
+): KanalHatVarYokOzet | null {
+  if (!blok?.satirlar?.length) return null;
+  const il = ilce.trim();
+  const mh = mahalle.trim();
+  const rows = blok.satirlar.filter(
+    (r) => (!il || r.ilce === il) && (!mh || r.mahalle === mh)
+  );
+  if (!rows.length) return null;
+
+  let varN = 0;
+  let yokN = 0;
+  let kismiN = 0;
+  let digerN = 0;
+  let aboneTop = 0;
+  for (const r of rows) {
+    if (r.durum === "var") varN += r.nufus;
+    else if (r.durum === "yok") yokN += r.nufus;
+    else if (r.durum === "kismi") kismiN += r.nufus;
+    else digerN += r.nufus;
+    if (r.abone != null) aboneTop += r.abone;
+  }
+  const toplamNufus = varN + yokN + kismiN + digerN;
+  const pct = (n: number) =>
+    toplamNufus > 0 ? (n / toplamNufus) * 100 : null;
+  return {
+    satirSayisi: rows.length,
+    toplamNufus,
+    toplamAbone: aboneTop,
+    varNufus: varN,
+    yokNufus: yokN,
+    kismiNufus: kismiN,
+    digerNufus: digerN,
+    varYuzde: pct(varN),
+    yokYuzde: pct(yokN),
+    kismiYuzde: pct(kismiN),
+    digerYuzde: pct(digerN),
+  };
+}
 
 export type MonthlyTotals = {
   okuma: number;
@@ -382,6 +464,42 @@ export function computeIlcePerformans(
   return { satirlar: sorted, toplam };
 }
 
+/** Excel elektrik sayfaları ile pano `mahalleKey` uyumu (parse-excel.mjs ile aynı) */
+function elektrikNormKey(s: string): string {
+  return s
+    .trim()
+    .toLocaleLowerCase("tr-TR")
+    .replace(/\s+/g, "")
+    .replace(/\./g, "")
+    .replace(/-/g, "");
+}
+
+function elektrikAsciiFoldTr(s: string): string {
+  return s
+    .replace(/ğ/g, "g")
+    .replace(/ü/g, "u")
+    .replace(/ş/g, "s")
+    .replace(/ı/g, "i")
+    .replace(/ö/g, "o")
+    .replace(/ç/g, "c");
+}
+
+function stripElektrikMahalleSuffix(s: string): string {
+  return s
+    .trim()
+    .replace(/\s+MAHALLESİ\s*$/iu, "")
+    .replace(/\s+MAH\.\s*$/iu, "")
+    .replace(/\s+MAH\s*$/iu, "")
+    .trim();
+}
+
+/** İlçe + mahalle için `byKonumAylik` anahtarı */
+export function elektrikKonumAnahtari(ilce: string, mahalle: string): string {
+  return `${elektrikAsciiFoldTr(elektrikNormKey(ilce))}|${elektrikAsciiFoldTr(
+    elektrikNormKey(stripElektrikMahalleSuffix(mahalle))
+  )}`;
+}
+
 /** Elektrik satırı: seçilen dönem (yıllık / tek ay) için kWh ve tahakkuk */
 export function elektrikDetayDonemToplam(
   d: ElektrikDetaySatiri,
@@ -443,6 +561,44 @@ export function elektrikDetayIlceDonem(
   if (!bi) return { kwh: 0, tahakkuk: 0, count: 0 };
   if (isYearly) return { kwh: bi.kwh, tahakkuk: bi.tahakkuk, count: bi.count };
   return { kwh: 0, tahakkuk: 0, count: bi.count };
+}
+
+function elektrikKonumAylikGet(
+  d: ElektrikDetaySatiri,
+  ilce: string,
+  mahalle: string
+): ElektrikAylikHucre[] | null {
+  const key = elektrikKonumAnahtari(ilce, mahalle);
+  const b = d.byKonumAylik?.[key]?.aylik;
+  return b && b.length === 12 ? b : null;
+}
+
+/** İlçe + mahalle + dönem (Excel’deki konum satırları) */
+export function elektrikDetayKonumDonem(
+  d: ElektrikDetaySatiri,
+  ilce: string,
+  mahalle: string,
+  isYearly: boolean,
+  monthIndex: number
+): { kwh: number; tahakkuk: number; count: number } {
+  const count = d.byKonumAylik?.[elektrikKonumAnahtari(ilce, mahalle)]?.count ?? 0;
+  const aylik = elektrikKonumAylikGet(d, ilce, mahalle);
+  if (aylik) {
+    if (isYearly) {
+      return {
+        count,
+        ...aylik.reduce(
+          (acc, c) => ({
+            kwh: acc.kwh + c.kwh,
+            tahakkuk: acc.tahakkuk + c.tahakkuk,
+          }),
+          { kwh: 0, tahakkuk: 0 }
+        ),
+      };
+    }
+    return { count, ...(aylik[monthIndex] ?? { kwh: 0, tahakkuk: 0 }) };
+  }
+  return { kwh: 0, tahakkuk: 0, count: 0 };
 }
 
 function hatYilHucre(

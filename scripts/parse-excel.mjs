@@ -180,6 +180,49 @@ function readAltyapiMap(wb) {
   return out;
 }
 
+const KANAL_VAR_YOK_SHEET = "Kanalizasyon Hattı VAR-YOK";
+
+/** Excel VAR / YOK / KISMİ hücresi → sabit anahtar */
+function parseKanalVarYokDurum(cell) {
+  const t = asciiFoldTr(normKey(textCell(cell)));
+  if (!t) return null;
+  if (t === "yok") return "yok";
+  if (t === "var") return "var";
+  if (t.includes("kismi")) return "kismi";
+  return "diger";
+}
+
+/**
+ * Kanalizasyon Hattı VAR-YOK sayfası (İLÇE, MAHALLE, plan nüfus, abone, VAR/YOK).
+ */
+function readKanalHatVarYok(wb) {
+  const rows = readRows(wb, KANAL_VAR_YOK_SHEET);
+  if (rows.length < 2) return null;
+  const satirlar = [];
+  for (let i = 1; i < rows.length; i++) {
+    const r = rows[i];
+    if (!r) continue;
+    const ilce = textCell(r[0]).toLocaleUpperCase("tr-TR");
+    const mahalle = textCell(r[1]);
+    if (!ilce || !mahalle) continue;
+    const nufus = num(r[2]);
+    if (nufus == null || nufus < 0) continue;
+    const abone = num(r[3]);
+    const durum = parseKanalVarYokDurum(r[4]);
+    if (durum == null) continue;
+    satirlar.push({
+      ilce,
+      mahalle,
+      konumKey: mahalleKey(ilce, mahalle),
+      nufus,
+      abone,
+      durum,
+    });
+  }
+  if (!satirlar.length) return null;
+  return { sheetLabel: KANAL_VAR_YOK_SHEET, satirlar };
+}
+
 /** Ay adı + kWh / TL sütun indeksleri (Elektrik sayfaları) */
 function findElektrikAySutunlari(headerRow) {
   const aylikKwh = new Array(12).fill(-1);
@@ -220,6 +263,7 @@ function readElektrikSheetSummary(wb, sheetName, label, key) {
       byIlce: {},
       aylikToplam: emptyAylik12(),
       byIlceAylik: {},
+      byKonumAylik: {},
     };
   }
   const headerCells = rows[0] ?? [];
@@ -228,6 +272,7 @@ function readElektrikSheetSummary(wb, sheetName, label, key) {
 
   const kwhIdxLegacy = [];
   const tlIdxLegacy = [];
+  const mahalleIdx = headers.findIndex((h) => h === "mahalle");
   let ilceIdx = headers.findIndex((h) => h === "ilçe");
   if (ilceIdx < 0) {
     ilceIdx = headers.findIndex((h) => {
@@ -246,6 +291,8 @@ function readElektrikSheetSummary(wb, sheetName, label, key) {
   const byIlce = {};
   const aylikToplam = emptyAylik12();
   const byIlceAylik = {};
+  /** mahalleKey(ilce, mahalle) → aylık kWh/TL (3 sayfada MAHALLE + İLÇE) */
+  const byKonumAylik = {};
 
   for (let i = 1; i < rows.length; i++) {
     const r = rows[i];
@@ -253,6 +300,10 @@ function readElektrikSheetSummary(wb, sheetName, label, key) {
     const ilceRaw =
       ilceIdx >= 0 ? textCell(r[ilceIdx]).toLocaleUpperCase("tr-TR") : "";
     const ilce = ilceRaw || "BİLİNMİYOR";
+    const mahalleRaw =
+      mahalleIdx >= 0 ? textCell(r[mahalleIdx]) : "";
+    const mahalle = mahalleRaw || "BİLİNMİYOR";
+    const konumKey = mahalleKey(ilce, mahalle);
     let rowHasData = false;
     let rowKwh = 0;
     let rowTl = 0;
@@ -287,6 +338,19 @@ function readElektrikSheetSummary(wb, sheetName, label, key) {
         for (let m = 0; m < 12; m++) {
           byIlceAylik[ilce].aylik[m].kwh += rowAylik[m].kwh;
           byIlceAylik[ilce].aylik[m].tahakkuk += rowAylik[m].tahakkuk;
+        }
+        if (!byKonumAylik[konumKey]) {
+          byKonumAylik[konumKey] = {
+            ilce,
+            mahalle,
+            count: 0,
+            aylik: emptyAylik12(),
+          };
+        }
+        byKonumAylik[konumKey].count += 1;
+        for (let m = 0; m < 12; m++) {
+          byKonumAylik[konumKey].aylik[m].kwh += rowAylik[m].kwh;
+          byKonumAylik[konumKey].aylik[m].tahakkuk += rowAylik[m].tahakkuk;
         }
       }
     } else {
@@ -326,6 +390,7 @@ function readElektrikSheetSummary(wb, sheetName, label, key) {
     byIlce,
     aylikToplam: hasAylik ? aylikToplam : null,
     byIlceAylik: hasAylik ? byIlceAylik : null,
+    byKonumAylik: hasAylik ? byKonumAylik : null,
   };
 }
 
@@ -618,6 +683,8 @@ function main() {
     mevcutKovasiYili
   );
 
+  const kanalHatVarYok = readKanalHatVarYok(wb);
+
   const payload = {
     generatedAt: new Date().toISOString(),
     dataYear: DATA_YEAR,
@@ -638,6 +705,7 @@ function main() {
       ilceDetay: elektrikIlceDetay,
     },
     hatUzunluklari,
+    kanalHatVarYok,
   };
 
   fs.mkdirSync(path.dirname(outPath), { recursive: true });
