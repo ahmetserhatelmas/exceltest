@@ -13,6 +13,7 @@ import {
 } from "recharts";
 import type {
   DashboardPayload,
+  HatUzunlukHucre,
   IlcePerformansSatiri,
   IlcePerformansToplam,
 } from "@/lib/dashboard";
@@ -20,7 +21,10 @@ import {
   aggregate,
   collectKaynakDepoSummary,
   computeIlcePerformans,
+  elektrikDetayDonemToplam,
+  elektrikDetayIlceDonem,
   filterRecords,
+  hatHucreYilOzeti,
   recordTahakkukDönem,
   statsForMonth,
 } from "@/lib/dashboard";
@@ -35,19 +39,6 @@ const nf1 = new Intl.NumberFormat("tr-TR", {
 function formatMetreCell(v: number | null | undefined) {
   if (v == null || !Number.isFinite(v)) return "—";
   return nf0.format(v);
-}
-
-/** Kanalizasyon satırında yıllık eklemeler içinde işletme / yatırım payı */
-function kanalIsletmeYatirimYuzde(
-  h: { isletme: number; yatirim: number } | null | undefined
-): { isletme: number | null; yatirim: number | null } {
-  if (!h) return { isletme: null, yatirim: null };
-  const ext = h.isletme + h.yatirim;
-  if (ext <= 0) return { isletme: null, yatirim: null };
-  return {
-    isletme: (h.isletme / ext) * 100,
-    yatirim: (h.yatirim / ext) * 100,
-  };
 }
 
 const chartMargin = { top: 8, right: 12, left: 22, bottom: 8 } as const;
@@ -95,7 +86,14 @@ export default function Dashboard({ data }: Props) {
   const [kaynakPanelOpen, setKaynakPanelOpen] = useState(true);
 
   const dataYear = data.dataYear ?? 2025;
-  const availableYears = [dataYear, dataYear + 1];
+  const hatYillarList = data.hatUzunluklari?.yillar ?? [];
+  const availableYears = useMemo(() => {
+    const s = new Set<number>([dataYear, dataYear + 1]);
+    for (const y of hatYillarList) {
+      if (typeof y === "number" && Number.isFinite(y)) s.add(y);
+    }
+    return [...s].sort((a, b) => a - b);
+  }, [dataYear, hatYillarList]);
   const [selectedYear, setSelectedYear] = useState<number>(dataYear);
 
   /** Seçilen yıl için veri var mı? (yalnızca dataYear'a ait kayıtlar mevcut) */
@@ -211,6 +209,124 @@ export default function Dashboard({ data }: Props) {
   const elektrik = data.elektrik;
   const hatUzunluklari = data.hatUzunluklari;
 
+  /** Elektrik tabloları: yıl = veri yılı, ay/ilçe üst filtrelerle */
+  const elektrikDonem = useMemo(() => {
+    const e = data.elektrik;
+    if (!e?.detay?.length) return null;
+    const yilOk = selectedYear === dataYear;
+    const yDet = e.detay.find((x) => x.key === "yagmur");
+    const kDet = e.detay.find((x) => x.key === "kanalizasyon");
+    const iDet = e.detay.find((x) => x.key === "icme");
+    if (!yDet || !kDet || !iDet) return null;
+
+    const detayTablo = e.detay.map((d) => {
+      const v = ilce.trim()
+        ? elektrikDetayIlceDonem(d, ilce, isYearly, monthIndex)
+        : elektrikDetayDonemToplam(d, isYearly, monthIndex);
+      const countOut = ilce.trim()
+        ? elektrikDetayIlceDonem(d, ilce, isYearly, monthIndex).count
+        : isYearly
+          ? d.count
+          : null;
+      return {
+        key: d.key,
+        label: d.label,
+        kwh: yilOk ? v.kwh : 0,
+        tahakkuk: yilOk ? v.tahakkuk : 0,
+        countOut,
+      };
+    });
+
+    const toplamKwh = detayTablo.reduce((s, r) => s + r.kwh, 0);
+    const toplamTah = detayTablo.reduce((s, r) => s + r.tahakkuk, 0);
+    const suTah = kpi.totalTahakkuk;
+    const netGelir = suTah - toplamTah;
+
+    const ilceListe = ilce.trim()
+      ? [ilce]
+      : (e.ilceDetay?.map((r) => r.ilce) ?? data.ilceler);
+
+    const ilceTablo = ilceListe.map((ilceAdi) => {
+      const y = elektrikDetayIlceDonem(yDet, ilceAdi, isYearly, monthIndex);
+      const k = elektrikDetayIlceDonem(kDet, ilceAdi, isYearly, monthIndex);
+      const ic = elektrikDetayIlceDonem(iDet, ilceAdi, isYearly, monthIndex);
+      const ty = yilOk ? y.kwh + k.kwh + ic.kwh : 0;
+      const tt = yilOk ? y.tahakkuk + k.tahakkuk + ic.tahakkuk : 0;
+      return {
+        ilce: ilceAdi,
+        toplamKwh: ty,
+        toplamTahakkuk: tt,
+        yagmurKwh: yilOk ? y.kwh : 0,
+        kanalizasyonKwh: yilOk ? k.kwh : 0,
+        icmeKwh: yilOk ? ic.kwh : 0,
+      };
+    });
+
+    return {
+      yilOk,
+      detayTablo,
+      toplamKwh,
+      toplamTahakkuk: toplamTah,
+      suTahakkuku: suTah,
+      netGelir,
+      ilceTablo,
+    };
+  }, [
+    data.elektrik,
+    data.ilceler,
+    dataYear,
+    selectedYear,
+    ilce,
+    isYearly,
+    monthIndex,
+    kpi.totalTahakkuk,
+  ]);
+
+  /** Hat uzunlukları: seçilen yıl + ilçe için eklenen metre ve işletme/yatırım % */
+  const hatYilOzet = useMemo(() => {
+    const h = data.hatUzunluklari;
+    if (!h?.ilceler?.length) return null;
+    const rows = ilce.trim()
+      ? h.ilceler.filter((r) => r.ilce === ilce)
+      : h.ilceler;
+
+    type HatIlceSatiri = {
+      ilce: string;
+      icmeSuyu: HatUzunlukHucre | null;
+      kanalizasyon: HatUzunlukHucre | null;
+      yagmurSuyu: HatUzunlukHucre | null;
+    };
+    const toplaTip = (pick: (r: HatIlceSatiri) => HatUzunlukHucre | null) => {
+      let is = 0;
+      let ya = 0;
+      for (const row of rows) {
+        const o = hatHucreYilOzeti(pick(row), selectedYear);
+        is += o.isletme;
+        ya += o.yatirim;
+      }
+      const ek = is + ya;
+      return {
+        ekMetre: ek,
+        isletmeYuzde: ek > 0 ? (is / ek) * 100 : null,
+        yatirimYuzde: ek > 0 ? (ya / ek) * 100 : null,
+      };
+    };
+
+    return {
+      rows,
+      icme: toplaTip((r) => r.icmeSuyu),
+      kanal: toplaTip((r) => r.kanalizasyon),
+      yagmur: toplaTip((r) => r.yagmurSuyu),
+    };
+  }, [data.hatUzunluklari, ilce, selectedYear]);
+
+  const aboneSekmesiBos =
+    !hasDataForYear &&
+    (activeSection === "ozet" ||
+      activeSection === "muhtar" ||
+      activeSection === "altyapi" ||
+      activeSection === "ilce");
+
   const selectCls =
     "rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-sm text-zinc-900 disabled:opacity-50 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100";
 
@@ -302,6 +418,13 @@ export default function Dashboard({ data }: Props) {
             <strong>
               {selectedMonthLabel} {dataYear}
             </strong>
+            {hatYillarList.length > 0 && (
+              <>
+                {" "}
+                · Hat yılları: {hatYillarList[0]}–
+                {hatYillarList[hatYillarList.length - 1]}
+              </>
+            )}
           </p>
         </div>
       </div>
@@ -349,16 +472,30 @@ export default function Dashboard({ data }: Props) {
             />
             <KpiCard
               title="Toplam elektrik tah."
-              subtitle="yıllık (TL)"
+              subtitle={
+                elektrikDonem?.yilOk
+                  ? `${isYearly ? "yıllık" : selectedMonthLabel}${ilce ? ` · ${ilce}` : ""}`
+                  : `${dataYear} veri yılı dışı`
+              }
               value={
-                elektrik ? `${nf.format(elektrik.toplamElektrikTahakkuku)} ₺` : "—"
+                elektrikDonem
+                  ? `${nf.format(elektrikDonem.toplamTahakkuk)} ₺`
+                  : elektrik
+                    ? `${nf.format(elektrik.toplamElektrikTahakkuku)} ₺`
+                    : "—"
               }
               valueCompact
             />
             <KpiCard
               title="Net gelir"
-              subtitle="su tah. - elektrik tah."
-              value={elektrik ? `${nf.format(elektrik.netGelir)} ₺` : "—"}
+              subtitle="su tah. − elektrik tah. (üst filtreler)"
+              value={
+                elektrikDonem
+                  ? `${nf.format(elektrikDonem.netGelir)} ₺`
+                  : elektrik
+                    ? `${nf.format(elektrik.netGelir)} ₺`
+                    : "—"
+              }
               valueCompact
             />
           </div>
@@ -411,11 +548,15 @@ export default function Dashboard({ data }: Props) {
 
           {/* İÇERİK */}
           <div className="p-4 md:p-6">
-            {!hasDataForYear ? (
+            {aboneSekmesiBos ? (
               <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-zinc-300 bg-zinc-50 py-20 text-center dark:border-zinc-700 dark:bg-zinc-900/40">
                 <p className="text-2xl">📂</p>
                 <p className="font-semibold text-zinc-700 dark:text-zinc-300">
-                  {selectedYear} yılı için henüz veri yok
+                  {selectedYear} yılı için abone / su tüketim verisi yok
+                </p>
+                <p className="max-w-md text-sm text-zinc-500">
+                  Altyapı hatları ve elektrik özetine üst menüden geçebilirsiniz; hat
+                  tabloları seçilen yıla göre güncellenir.
                 </p>
               </div>
             ) : (
@@ -657,7 +798,8 @@ export default function Dashboard({ data }: Props) {
                   <p className="mb-3 text-xs text-zinc-500 dark:text-zinc-500">
                     Veri.xlsx, <strong>KAYNAK-TERFİ-DEPO</strong> sayfası;
                     seçili ilçe/mahalle defterleriyle eşleşen adlar (benzersiz
-                    liste).
+                    liste). Yıl filtresi bu listeyi değiştirmez; hat uzunlukları ve
+                    elektrik özetinde yıl/ay seçimi kullanılır.
                   </p>
                   {kaynakOzeti ? (
                     <div className="flex flex-col gap-3 text-zinc-800 dark:text-zinc-200">
@@ -702,67 +844,108 @@ export default function Dashboard({ data }: Props) {
                       Kaynak:{" "}
                       <strong>{hatUzunluklari.sheets.icmeSuyu}</strong>,{" "}
                       <strong>{hatUzunluklari.sheets.kanalizasyon}</strong>,{" "}
-                      <strong>{hatUzunluklari.sheets.yagmurSuyu}</strong>. Toplam sütunu
-                      Excel&apos;deki ilçe toplamıdır; işletme/yatırım yüzdeleri yıllık
-                      eklemeler içindeki paydır.
+                      <strong>{hatUzunluklari.sheets.yagmurSuyu}</strong>. Üstteki{" "}
+                      <strong>yıl</strong> ve <strong>ilçe</strong> seçimine göre tablo,
+                      seçilen yılda eklenen hat (işletme + yatırım, m) ve bu eklemenin
+                      içindeki işletme / yatırım yüzdelerini gösterir. Kümülatif Excel
+                      toplamı aşağıda referans olarak durur.
                     </p>
-                    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-                      <MiniKpi
-                        label="İçme suyu hatı (toplam)"
-                        value={`${formatMetreCell(hatUzunluklari.ozet.icmeSuyuMetre)} m`}
-                      />
-                      <MiniKpi
-                        label="Kanalizasyon hatı (toplam)"
-                        value={`${formatMetreCell(hatUzunluklari.ozet.kanalizasyonMetre)} m`}
-                      />
-                      <MiniKpi
-                        label="Yağmur suyu hatı (toplam)"
-                        value={`${formatMetreCell(hatUzunluklari.ozet.yagmurSuyuMetre)} m`}
-                      />
-                      <MiniKpi
-                        label="Kanal · işletme payı"
-                        value={
-                          hatUzunluklari.ozet.kanalizasyonIsletmeYuzde != null
-                            ? `% ${nf1.format(hatUzunluklari.ozet.kanalizasyonIsletmeYuzde)}`
-                            : "—"
-                        }
-                      />
-                      <MiniKpi
-                        label="Kanal · yatırım payı"
-                        value={
-                          hatUzunluklari.ozet.kanalizasyonYatirimYuzde != null
-                            ? `% ${nf1.format(hatUzunluklari.ozet.kanalizasyonYatirimYuzde)}`
-                            : "—"
-                        }
-                      />
-                    </div>
+                    {hatYilOzet && (
+                      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+                        <MiniKpi
+                          label={`İçme · ${selectedYear} eklenen (m)`}
+                          value={`${formatMetreCell(hatYilOzet.icme.ekMetre)} m`}
+                        />
+                        <MiniKpi
+                          label={`İçme · işl. / yat. % (${selectedYear})`}
+                          value={
+                            hatYilOzet.icme.isletmeYuzde != null
+                              ? `% ${nf1.format(hatYilOzet.icme.isletmeYuzde)} / % ${nf1.format(hatYilOzet.icme.yatirimYuzde ?? 0)}`
+                              : "—"
+                          }
+                        />
+                        <MiniKpi
+                          label={`Kanal · ${selectedYear} eklenen (m)`}
+                          value={`${formatMetreCell(hatYilOzet.kanal.ekMetre)} m`}
+                        />
+                        <MiniKpi
+                          label={`Kanal · işl. / yat. % (${selectedYear})`}
+                          value={
+                            hatYilOzet.kanal.isletmeYuzde != null
+                              ? `% ${nf1.format(hatYilOzet.kanal.isletmeYuzde)} / % ${nf1.format(hatYilOzet.kanal.yatirimYuzde ?? 0)}`
+                              : "—"
+                          }
+                        />
+                        <MiniKpi
+                          label={`Yağmur · ${selectedYear} eklenen (m)`}
+                          value={`${formatMetreCell(hatYilOzet.yagmur.ekMetre)} m`}
+                        />
+                        <MiniKpi
+                          label={`Yağmur · işl. / yat. % (${selectedYear})`}
+                          value={
+                            hatYilOzet.yagmur.isletmeYuzde != null
+                              ? `% ${nf1.format(hatYilOzet.yagmur.isletmeYuzde)} / % ${nf1.format(hatYilOzet.yagmur.yatirimYuzde ?? 0)}`
+                              : "—"
+                          }
+                        />
+                      </div>
+                    )}
+                    <p className="text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-500">
+                      Kümülatif (Excel &quot;toplam&quot; sütunu, tüm zamanlar): içme{" "}
+                      {formatMetreCell(hatUzunluklari.ozet.icmeSuyuMetre)} m · kanal{" "}
+                      {formatMetreCell(hatUzunluklari.ozet.kanalizasyonMetre)} m · yağmur{" "}
+                      {formatMetreCell(hatUzunluklari.ozet.yagmurSuyuMetre)} m
+                    </p>
                     <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
-                      <table className="w-full min-w-[920px] border-collapse text-left text-sm">
+                      <table className="w-full min-w-[1100px] border-collapse text-left text-sm">
                         <thead>
                           <tr className="border-b border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900/80">
                             <th className="px-3 py-2 font-semibold text-zinc-700 dark:text-zinc-300">
                               İlçe
                             </th>
                             <th className="px-3 py-2 text-right font-semibold text-zinc-700 dark:text-zinc-300">
-                              İçme suyu (m)
+                              İçme ({selectedYear}) m
                             </th>
                             <th className="px-3 py-2 text-right font-semibold text-zinc-700 dark:text-zinc-300">
-                              Kanalizasyon (m)
+                              İçme işl. %
                             </th>
                             <th className="px-3 py-2 text-right font-semibold text-zinc-700 dark:text-zinc-300">
-                              Kanal işletme %
+                              İçme yat. %
                             </th>
                             <th className="px-3 py-2 text-right font-semibold text-zinc-700 dark:text-zinc-300">
-                              Kanal yatırım %
+                              Kanal ({selectedYear}) m
                             </th>
                             <th className="px-3 py-2 text-right font-semibold text-zinc-700 dark:text-zinc-300">
-                              Yağmur suyu (m)
+                              Kanal işl. %
+                            </th>
+                            <th className="px-3 py-2 text-right font-semibold text-zinc-700 dark:text-zinc-300">
+                              Kanal yat. %
+                            </th>
+                            <th className="px-3 py-2 text-right font-semibold text-zinc-700 dark:text-zinc-300">
+                              Yağmur ({selectedYear}) m
+                            </th>
+                            <th className="px-3 py-2 text-right font-semibold text-zinc-700 dark:text-zinc-300">
+                              Yağmur işl. %
+                            </th>
+                            <th className="px-3 py-2 text-right font-semibold text-zinc-700 dark:text-zinc-300">
+                              Yağmur yat. %
+                            </th>
+                            <th className="px-3 py-2 text-right font-semibold text-zinc-700 dark:text-zinc-300">
+                              Kum. içme m
+                            </th>
+                            <th className="px-3 py-2 text-right font-semibold text-zinc-700 dark:text-zinc-300">
+                              Kum. kanal m
+                            </th>
+                            <th className="px-3 py-2 text-right font-semibold text-zinc-700 dark:text-zinc-300">
+                              Kum. yağmur m
                             </th>
                           </tr>
                         </thead>
                         <tbody>
-                          {hatUzunluklari.ilceler.map((row) => {
-                            const kyz = kanalIsletmeYatirimYuzde(row.kanalizasyon);
+                          {(hatYilOzet?.rows ?? hatUzunluklari.ilceler).map((row) => {
+                            const ic = hatHucreYilOzeti(row.icmeSuyu, selectedYear);
+                            const ka = hatHucreYilOzeti(row.kanalizasyon, selectedYear);
+                            const ya = hatHucreYilOzeti(row.yagmurSuyu, selectedYear);
                             return (
                               <tr
                                 key={row.ilce}
@@ -772,22 +955,51 @@ export default function Dashboard({ data }: Props) {
                                   {row.ilce}
                                 </td>
                                 <td className="px-3 py-2 text-right tabular-nums text-zinc-800 dark:text-zinc-200">
+                                  {formatMetreCell(ic.ekMetre)}
+                                </td>
+                                <td className="px-3 py-2 text-right tabular-nums text-zinc-800 dark:text-zinc-200">
+                                  {ic.isletmeYuzde != null
+                                    ? `% ${nf1.format(ic.isletmeYuzde)}`
+                                    : "—"}
+                                </td>
+                                <td className="px-3 py-2 text-right tabular-nums text-zinc-800 dark:text-zinc-200">
+                                  {ic.yatirimYuzde != null
+                                    ? `% ${nf1.format(ic.yatirimYuzde)}`
+                                    : "—"}
+                                </td>
+                                <td className="px-3 py-2 text-right tabular-nums text-zinc-800 dark:text-zinc-200">
+                                  {formatMetreCell(ka.ekMetre)}
+                                </td>
+                                <td className="px-3 py-2 text-right tabular-nums text-zinc-800 dark:text-zinc-200">
+                                  {ka.isletmeYuzde != null
+                                    ? `% ${nf1.format(ka.isletmeYuzde)}`
+                                    : "—"}
+                                </td>
+                                <td className="px-3 py-2 text-right tabular-nums text-zinc-800 dark:text-zinc-200">
+                                  {ka.yatirimYuzde != null
+                                    ? `% ${nf1.format(ka.yatirimYuzde)}`
+                                    : "—"}
+                                </td>
+                                <td className="px-3 py-2 text-right tabular-nums text-zinc-800 dark:text-zinc-200">
+                                  {formatMetreCell(ya.ekMetre)}
+                                </td>
+                                <td className="px-3 py-2 text-right tabular-nums text-zinc-800 dark:text-zinc-200">
+                                  {ya.isletmeYuzde != null
+                                    ? `% ${nf1.format(ya.isletmeYuzde)}`
+                                    : "—"}
+                                </td>
+                                <td className="px-3 py-2 text-right tabular-nums text-zinc-800 dark:text-zinc-200">
+                                  {ya.yatirimYuzde != null
+                                    ? `% ${nf1.format(ya.yatirimYuzde)}`
+                                    : "—"}
+                                </td>
+                                <td className="px-3 py-2 text-right tabular-nums text-zinc-600 dark:text-zinc-400">
                                   {formatMetreCell(row.icmeSuyu?.toplam ?? null)}
                                 </td>
-                                <td className="px-3 py-2 text-right tabular-nums text-zinc-800 dark:text-zinc-200">
+                                <td className="px-3 py-2 text-right tabular-nums text-zinc-600 dark:text-zinc-400">
                                   {formatMetreCell(row.kanalizasyon?.toplam ?? null)}
                                 </td>
-                                <td className="px-3 py-2 text-right tabular-nums text-zinc-800 dark:text-zinc-200">
-                                  {kyz.isletme != null
-                                    ? `% ${nf1.format(kyz.isletme)}`
-                                    : "—"}
-                                </td>
-                                <td className="px-3 py-2 text-right tabular-nums text-zinc-800 dark:text-zinc-200">
-                                  {kyz.yatirim != null
-                                    ? `% ${nf1.format(kyz.yatirim)}`
-                                    : "—"}
-                                </td>
-                                <td className="px-3 py-2 text-right tabular-nums text-zinc-800 dark:text-zinc-200">
+                                <td className="px-3 py-2 text-right tabular-nums text-zinc-600 dark:text-zinc-400">
                                   {formatMetreCell(row.yagmurSuyu?.toplam ?? null)}
                                 </td>
                               </tr>
@@ -882,36 +1094,60 @@ export default function Dashboard({ data }: Props) {
             {activeSection === "elektrik" && (
               <div className="flex flex-col gap-4">
                 <p className="text-xs text-zinc-500 dark:text-zinc-500">
-                  Elektrik tüketim/tahakkuk özeti: Yağmur Suyu, Kanalizasyon ve İçme Suyu
-                  elektrik tablolarından hesaplanır.
+                  Elektrik tüketim/tahakkuk: Yağmur / Kanalizasyon / İçme suyu sayfalarındaki{" "}
+                  <strong>aylık kWh ve TL</strong> sütunlarından hesaplanır. Üstteki{" "}
+                  <strong>yıl ({dataYear} veri dosyası)</strong>, <strong>ay</strong> ve{" "}
+                  <strong>ilçe</strong> seçimleri bu tablolara uygulanır. Su tahakkuku ve net
+                  gelir, özet KPI ile aynı dönem ve coğrafi filtredeki abone tahakkukunu
+                  kullanır.
+                  {!elektrikDonem?.yilOk && (
+                    <span className="block pt-1 font-medium text-amber-700 dark:text-amber-400">
+                      Seçilen yıl ({selectedYear}) elektrik Excel yılı değil; elektrik
+                      değerleri 0 gösterilir.
+                    </span>
+                  )}
                 </p>
 
                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                   <MiniKpi
                     label="Toplam Elektrik Tüketimi"
                     value={
-                      elektrik
-                        ? `${nf0.format(elektrik.toplamElektrikTuketimiKwh)} kWh`
-                        : "—"
+                      elektrikDonem
+                        ? `${nf0.format(elektrikDonem.toplamKwh)} kWh`
+                        : elektrik
+                          ? `${nf0.format(elektrik.toplamElektrikTuketimiKwh)} kWh`
+                          : "—"
                     }
                   />
                   <MiniKpi
                     label="Toplam Elektrik Tahakkuku"
                     value={
-                      elektrik
-                        ? `${nf.format(elektrik.toplamElektrikTahakkuku)} ₺`
-                        : "—"
+                      elektrikDonem
+                        ? `${nf.format(elektrikDonem.toplamTahakkuk)} ₺`
+                        : elektrik
+                          ? `${nf.format(elektrik.toplamElektrikTahakkuku)} ₺`
+                          : "—"
                     }
                   />
                   <MiniKpi
                     label="Toplam Su Tahakkuku"
                     value={
-                      elektrik ? `${nf.format(elektrik.toplamSuTahakkuku)} ₺` : "—"
+                      elektrikDonem
+                        ? `${nf.format(elektrikDonem.suTahakkuku)} ₺`
+                        : elektrik
+                          ? `${nf.format(elektrik.toplamSuTahakkuku)} ₺`
+                          : "—"
                     }
                   />
                   <MiniKpi
                     label="Net Gelir"
-                    value={elektrik ? `${nf.format(elektrik.netGelir)} ₺` : "—"}
+                    value={
+                      elektrikDonem
+                        ? `${nf.format(elektrikDonem.netGelir)} ₺`
+                        : elektrik
+                          ? `${nf.format(elektrik.netGelir)} ₺`
+                          : "—"
+                    }
                   />
                 </div>
 
@@ -934,7 +1170,7 @@ export default function Dashboard({ data }: Props) {
                       </tr>
                     </thead>
                     <tbody>
-                      {(elektrik?.detay ?? []).map((d) => (
+                      {(elektrikDonem?.detayTablo ?? []).map((d) => (
                         <tr
                           key={d.label}
                           className="border-b border-zinc-100 dark:border-zinc-800/80"
@@ -943,13 +1179,13 @@ export default function Dashboard({ data }: Props) {
                             {d.label}
                           </td>
                           <td className="px-3 py-2 text-right tabular-nums text-zinc-800 dark:text-zinc-200">
-                            {nf0.format(d.totalKwh)}
+                            {nf0.format(d.kwh)}
                           </td>
                           <td className="px-3 py-2 text-right tabular-nums text-zinc-800 dark:text-zinc-200">
-                            {nf.format(d.totalTahakkuk)}
+                            {nf.format(d.tahakkuk)}
                           </td>
                           <td className="px-3 py-2 text-right tabular-nums text-zinc-800 dark:text-zinc-200">
-                            {nf0.format(d.count)}
+                            {d.countOut != null ? nf0.format(d.countOut) : "—"}
                           </td>
                         </tr>
                       ))}
@@ -982,7 +1218,7 @@ export default function Dashboard({ data }: Props) {
                       </tr>
                     </thead>
                     <tbody>
-                      {(elektrik?.ilceDetay ?? []).map((d) => (
+                      {(elektrikDonem?.ilceTablo ?? []).map((d) => (
                         <tr
                           key={d.ilce}
                           className="border-b border-zinc-100 dark:border-zinc-800/80"

@@ -180,14 +180,54 @@ function readAltyapiMap(wb) {
   return out;
 }
 
+/** Ay adı + kWh / TL sütun indeksleri (Elektrik sayfaları) */
+function findElektrikAySutunlari(headerRow) {
+  const aylikKwh = new Array(12).fill(-1);
+  const aylikTl = new Array(12).fill(-1);
+  if (!headerRow?.length) {
+    return { hasAylik: false, aylikKwh, aylikTl };
+  }
+  const normHeaders = headerRow.map((h) => normKey(h));
+  for (let m = 0; m < 12; m++) {
+    const wantK = normKey(`${MONTHS_TR[m]} kWh`);
+    const wantT = normKey(`${MONTHS_TR[m]} TL`);
+    let ik = -1;
+    let it = -1;
+    for (let c = 0; c < normHeaders.length; c++) {
+      if (normHeaders[c] === wantK) ik = c;
+      if (normHeaders[c] === wantT) it = c;
+    }
+    aylikKwh[m] = ik;
+    aylikTl[m] = it;
+  }
+  const hasAylik = aylikKwh.some((c) => c >= 0);
+  return { hasAylik, aylikKwh, aylikTl };
+}
+
+function emptyAylik12() {
+  return Array.from({ length: 12 }, () => ({ kwh: 0, tahakkuk: 0 }));
+}
+
 function readElektrikSheetSummary(wb, sheetName, label, key) {
   const rows = readRows(wb, sheetName);
   if (rows.length < 2) {
-    return { key, label, totalKwh: 0, totalTahakkuk: 0, count: 0, byIlce: {} };
+    return {
+      key,
+      label,
+      totalKwh: 0,
+      totalTahakkuk: 0,
+      count: 0,
+      byIlce: {},
+      aylikToplam: emptyAylik12(),
+      byIlceAylik: {},
+    };
   }
-  const headers = rows[0].map((h) => normKey(h));
-  const kwhIdx = [];
-  const tlIdx = [];
+  const headerCells = rows[0] ?? [];
+  const headers = headerCells.map((h) => normKey(h));
+  const { hasAylik, aylikKwh, aylikTl } = findElektrikAySutunlari(headerCells);
+
+  const kwhIdxLegacy = [];
+  const tlIdxLegacy = [];
   let ilceIdx = headers.findIndex((h) => h === "ilçe");
   if (ilceIdx < 0) {
     ilceIdx = headers.findIndex((h) => {
@@ -196,14 +236,17 @@ function readElektrikSheetSummary(wb, sheetName, label, key) {
     });
   }
   headers.forEach((h, i) => {
-    if (h.includes("kwh")) kwhIdx.push(i);
-    if (h.endsWith("tl")) tlIdx.push(i);
+    if (h.includes("kwh")) kwhIdxLegacy.push(i);
+    if (h.endsWith("tl")) tlIdxLegacy.push(i);
   });
 
   let totalKwh = 0;
   let totalTahakkuk = 0;
   let count = 0;
   const byIlce = {};
+  const aylikToplam = emptyAylik12();
+  const byIlceAylik = {};
+
   for (let i = 1; i < rows.length; i++) {
     const r = rows[i];
     if (!r) continue;
@@ -213,22 +256,58 @@ function readElektrikSheetSummary(wb, sheetName, label, key) {
     let rowHasData = false;
     let rowKwh = 0;
     let rowTl = 0;
-    for (const idx of kwhIdx) {
-      const v = num(r[idx]);
-      if (v != null) {
-        totalKwh += v;
-        rowKwh += v;
-        rowHasData = true;
+
+    if (hasAylik) {
+      const rowAylik = emptyAylik12();
+      for (let m = 0; m < 12; m++) {
+        const ik = aylikKwh[m];
+        const it = aylikTl[m];
+        const kv = ik >= 0 ? num(r[ik]) : null;
+        const tv = it >= 0 ? num(r[it]) : null;
+        if (kv != null) {
+          totalKwh += kv;
+          rowKwh += kv;
+          aylikToplam[m].kwh += kv;
+          rowAylik[m].kwh += kv;
+          rowHasData = true;
+        }
+        if (tv != null) {
+          totalTahakkuk += tv;
+          rowTl += tv;
+          aylikToplam[m].tahakkuk += tv;
+          rowAylik[m].tahakkuk += tv;
+          rowHasData = true;
+        }
+      }
+      if (rowHasData) {
+        if (!byIlceAylik[ilce]) {
+          byIlceAylik[ilce] = { count: 0, aylik: emptyAylik12() };
+        }
+        byIlceAylik[ilce].count += 1;
+        for (let m = 0; m < 12; m++) {
+          byIlceAylik[ilce].aylik[m].kwh += rowAylik[m].kwh;
+          byIlceAylik[ilce].aylik[m].tahakkuk += rowAylik[m].tahakkuk;
+        }
+      }
+    } else {
+      for (const idx of kwhIdxLegacy) {
+        const v = num(r[idx]);
+        if (v != null) {
+          totalKwh += v;
+          rowKwh += v;
+          rowHasData = true;
+        }
+      }
+      for (const idx of tlIdxLegacy) {
+        const v = num(r[idx]);
+        if (v != null) {
+          totalTahakkuk += v;
+          rowTl += v;
+          rowHasData = true;
+        }
       }
     }
-    for (const idx of tlIdx) {
-      const v = num(r[idx]);
-      if (v != null) {
-        totalTahakkuk += v;
-        rowTl += v;
-        rowHasData = true;
-      }
-    }
+
     if (rowHasData) {
       count += 1;
       if (!byIlce[ilce]) byIlce[ilce] = { kwh: 0, tahakkuk: 0, count: 0 };
@@ -238,7 +317,32 @@ function readElektrikSheetSummary(wb, sheetName, label, key) {
     }
   }
 
-  return { key, label, totalKwh, totalTahakkuk, count, byIlce };
+  return {
+    key,
+    label,
+    totalKwh,
+    totalTahakkuk,
+    count,
+    byIlce,
+    aylikToplam: hasAylik ? aylikToplam : null,
+    byIlceAylik: hasAylik ? byIlceAylik : null,
+  };
+}
+
+/** Üst başlıktaki yıl hücresi → sayı (2014); "< 2013" gibi değerler 2013 kovası */
+function parseHatYilHucre(cell) {
+  if (cell == null || cell === "") return null;
+  if (typeof cell === "number" && Number.isFinite(cell)) return cell;
+  const t = textCell(cell);
+  if (!t) return null;
+  const f = asciiFoldTr(normKey(t));
+  if (f.includes("<") || f.includes("kucuk")) {
+    const digits = t.match(/\d{4}/);
+    if (digits) return Number(digits[0]);
+    return 2013;
+  }
+  const n = Number(String(cell).replace(/\s/g, ""));
+  return Number.isFinite(n) ? n : null;
 }
 
 /** İçme / Kanal / Yağmur hat uzunluğu sayfaları (İLÇE + yıllık İŞLETME/YATIRIM + TOPLAM sütunu) */
@@ -272,17 +376,30 @@ function readHatUzunlukByIlce(wb, sheetName) {
     if (foldIlce.includes("toplam") || foldIlce.includes("genel")) continue;
 
     const mevcut = numMetre(r[1]);
-    let isletme = 0;
-    let yatirim = 0;
+    const byYear = {};
+    let aktifYil = null;
     for (let j = 2; j < toplamCol; j++) {
+      const yCand = parseHatYilHucre(h0[j]);
+      if (yCand != null) aktifYil = yCand;
+      if (aktifYil == null) continue;
       const lab = textCell(h1[j]).toLocaleUpperCase("tr-TR");
       const v = numMetre(r[j]);
       if (v == null) continue;
-      if (lab.includes("İŞLETME") || lab.includes("ISLETME")) isletme += v;
-      else if (lab.includes("YATIRIM")) yatirim += v;
+      if (!byYear[aktifYil]) byYear[aktifYil] = { isletme: 0, yatirim: 0 };
+      if (lab.includes("İŞLETME") || lab.includes("ISLETME")) {
+        byYear[aktifYil].isletme += v;
+      } else if (lab.includes("YATIRIM")) {
+        byYear[aktifYil].yatirim += v;
+      }
     }
     const toplam = numMetre(r[toplamCol]);
-    out[ilceRaw] = { mevcut, isletme, yatirim, toplam };
+    let isletme = 0;
+    let yatirim = 0;
+    for (const y of Object.keys(byYear)) {
+      isletme += byYear[y].isletme;
+      yatirim += byYear[y].yatirim;
+    }
+    out[ilceRaw] = { mevcut, isletme, yatirim, toplam, byYear };
   }
   return out;
 }
@@ -303,14 +420,18 @@ function mergeHatUzunlukPayload(icmeByIlce, kanalByIlce, yagmurByIlce) {
 
   const sumToplam = (by) =>
     Object.values(by).reduce((s, x) => s + (x?.toplam ?? 0), 0);
-  const sumIsletme = (by) =>
-    Object.values(by).reduce((s, x) => s + (x?.isletme ?? 0), 0);
-  const sumYatirim = (by) =>
-    Object.values(by).reduce((s, x) => s + (x?.yatirim ?? 0), 0);
 
-  const kIs = sumIsletme(kanalByIlce);
-  const kYa = sumYatirim(kanalByIlce);
-  const kExt = kIs + kYa;
+  const yilSet = new Set();
+  const yilTopla = (by) => {
+    for (const x of Object.values(by)) {
+      if (!x?.byYear) continue;
+      for (const y of Object.keys(x.byYear)) yilSet.add(Number(y));
+    }
+  };
+  yilTopla(icmeByIlce);
+  yilTopla(kanalByIlce);
+  yilTopla(yagmurByIlce);
+  const yillar = [...yilSet].filter((n) => Number.isFinite(n)).sort((a, b) => a - b);
 
   return {
     sheets: {
@@ -319,12 +440,13 @@ function mergeHatUzunlukPayload(icmeByIlce, kanalByIlce, yagmurByIlce) {
       yagmurSuyu: "Yağmur Suyu Hat Uzunluğu",
     },
     ilceler: satirlar,
+    yillar,
     ozet: {
       icmeSuyuMetre: sumToplam(icmeByIlce),
       kanalizasyonMetre: sumToplam(kanalByIlce),
       yagmurSuyuMetre: sumToplam(yagmurByIlce),
-      kanalizasyonIsletmeYuzde: kExt > 0 ? (kIs / kExt) * 100 : null,
-      kanalizasyonYatirimYuzde: kExt > 0 ? (kYa / kExt) * 100 : null,
+      kanalizasyonIsletmeYuzde: null,
+      kanalizasyonYatirimYuzde: null,
     },
   };
 }

@@ -12,11 +12,40 @@ export type KaynakDepoOzeti = {
   terfi: string;
 };
 
-export type HatUzunlukHucre = {
-  mevcut: number | null;
+export type HatYilDilimi = {
   isletme: number;
   yatirim: number;
+};
+
+export type HatUzunlukHucre = {
+  mevcut: number | null;
+  /** Tüm yılların işletme toplamı (Excel satırından) */
+  isletme: number;
+  /** Tüm yılların yatırım toplamı (Excel satırından) */
+  yatirim: number;
+  /** Excel kümülatif toplam sütunu (m) */
   toplam: number | null;
+  /** Yıla göre eklenen hat (m) — JSON anahtarları string olabilir */
+  byYear?: Record<string, HatYilDilimi>;
+};
+
+export type ElektrikAylikHucre = {
+  kwh: number;
+  tahakkuk: number;
+};
+
+export type ElektrikDetaySatiri = {
+  key: "yagmur" | "kanalizasyon" | "icme";
+  label: string;
+  totalKwh: number;
+  totalTahakkuk: number;
+  count: number;
+  byIlce?: Record<string, { kwh: number; tahakkuk: number; count: number }>;
+  aylikToplam?: ElektrikAylikHucre[] | null;
+  byIlceAylik?: Record<
+    string,
+    { count: number; aylik: ElektrikAylikHucre[] }
+  > | null;
 };
 
 export type DashboardRecord = {
@@ -64,14 +93,7 @@ export type DashboardPayload = {
     toplamElektrikTahakkuku: number;
     toplamSuTahakkuku: number;
     netGelir: number;
-    detay: Array<{
-      key: "yagmur" | "kanalizasyon" | "icme";
-      label: string;
-      totalKwh: number;
-      totalTahakkuk: number;
-      count: number;
-      byIlce?: Record<string, { kwh: number; tahakkuk: number; count: number }>;
-    }>;
+    detay: ElektrikDetaySatiri[];
     ilceDetay?: Array<{
       ilce: string;
       toplamKwh: number;
@@ -91,6 +113,8 @@ export type DashboardPayload = {
       kanalizasyon: string;
       yagmurSuyu: string;
     };
+    /** Hat sayfalarında geçen yıl başlıkları (sıralı) */
+    yillar?: number[];
     ilceler: Array<{
       ilce: string;
       icmeSuyu: HatUzunlukHucre | null;
@@ -354,4 +378,99 @@ export function computeIlcePerformans(
   };
 
   return { satirlar: sorted, toplam };
+}
+
+/** Elektrik satırı: seçilen dönem (yıllık / tek ay) için kWh ve tahakkuk */
+export function elektrikDetayDonemToplam(
+  d: ElektrikDetaySatiri,
+  isYearly: boolean,
+  monthIndex: number
+): { kwh: number; tahakkuk: number } {
+  const aylik = d.aylikToplam;
+  if (aylik && aylik.length === 12) {
+    if (isYearly) {
+      return aylik.reduce(
+        (acc, c) => ({
+          kwh: acc.kwh + c.kwh,
+          tahakkuk: acc.tahakkuk + c.tahakkuk,
+        }),
+        { kwh: 0, tahakkuk: 0 }
+      );
+    }
+    return aylik[monthIndex] ?? { kwh: 0, tahakkuk: 0 };
+  }
+  if (isYearly) {
+    return { kwh: d.totalKwh, tahakkuk: d.totalTahakkuk };
+  }
+  return { kwh: 0, tahakkuk: 0 };
+}
+
+function elektrikIlceAylikGet(
+  d: ElektrikDetaySatiri,
+  ilce: string
+): ElektrikAylikHucre[] | null {
+  const b = d.byIlceAylik?.[ilce]?.aylik;
+  return b && b.length === 12 ? b : null;
+}
+
+/** İlçe + dönem için tek elektrik birimi (yağmur/kanal/içme) */
+export function elektrikDetayIlceDonem(
+  d: ElektrikDetaySatiri,
+  ilce: string,
+  isYearly: boolean,
+  monthIndex: number
+): { kwh: number; tahakkuk: number; count: number } {
+  const count = d.byIlce?.[ilce]?.count ?? 0;
+  const aylik = elektrikIlceAylikGet(d, ilce);
+  if (aylik) {
+    if (isYearly) {
+      return {
+        count,
+        ...aylik.reduce(
+          (acc, c) => ({
+            kwh: acc.kwh + c.kwh,
+            tahakkuk: acc.tahakkuk + c.tahakkuk,
+          }),
+          { kwh: 0, tahakkuk: 0 }
+        ),
+      };
+    }
+    return { count, ...(aylik[monthIndex] ?? { kwh: 0, tahakkuk: 0 }) };
+  }
+  const bi = d.byIlce?.[ilce];
+  if (!bi) return { kwh: 0, tahakkuk: 0, count: 0 };
+  if (isYearly) return { kwh: bi.kwh, tahakkuk: bi.tahakkuk, count: bi.count };
+  return { kwh: 0, tahakkuk: 0, count: bi.count };
+}
+
+function hatYilHucre(
+  h: HatUzunlukHucre | null | undefined,
+  yil: number
+): HatYilDilimi {
+  if (!h?.byYear) return { isletme: 0, yatirim: 0 };
+  const pack = h.byYear as Record<string, HatYilDilimi>;
+  return pack[String(yil)] ?? pack[yil] ?? { isletme: 0, yatirim: 0 };
+}
+
+/** Seçilen yıl için eklenen hat (m) ve işletme / yatırım yüzdeleri */
+export function hatHucreYilOzeti(
+  h: HatUzunlukHucre | null | undefined,
+  yil: number
+): {
+  ekMetre: number;
+  isletme: number;
+  yatirim: number;
+  isletmeYuzde: number | null;
+  yatirimYuzde: number | null;
+} {
+  const { isletme, yatirim } = hatYilHucre(h, yil);
+  const ekMetre = isletme + yatirim;
+  const ext = ekMetre;
+  return {
+    ekMetre,
+    isletme,
+    yatirim,
+    isletmeYuzde: ext > 0 ? (isletme / ext) * 100 : null,
+    yatirimYuzde: ext > 0 ? (yatirim / ext) * 100 : null,
+  };
 }
