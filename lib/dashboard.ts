@@ -115,6 +115,8 @@ export type DashboardPayload = {
     };
     /** Hat sayfalarında geçen yıl başlıkları (sıralı) */
     yillar?: number[];
+    /** "< 2013" gibi ilk sütun başlığının sayısal yılı (genelde 2013); mevcut hat stoku */
+    mevcutKovasiYili?: number | null;
     ilceler: Array<{
       ilce: string;
       icmeSuyu: HatUzunlukHucre | null;
@@ -452,25 +454,67 @@ function hatYilHucre(
   return pack[String(yil)] ?? pack[yil] ?? { isletme: 0, yatirim: 0 };
 }
 
-/** Seçilen yıl için eklenen hat (m) ve işletme / yatırım yüzdeleri */
-export function hatHucreYilOzeti(
-  h: HatUzunlukHucre | null | undefined,
-  yil: number
-): {
+export type HatHucreYilOzeti = {
   ekMetre: number;
   isletme: number;
   yatirim: number;
   isletmeYuzde: number | null;
   yatirimYuzde: number | null;
-} {
+};
+
+/** Tüm yılların işletme + yatırım eklemeleri (satırdaki toplam; Excel ile uyumlu) */
+export function hatHucreTumYillarOzeti(
+  h: HatUzunlukHucre | null | undefined
+): HatHucreYilOzeti {
+  if (!h) {
+    return {
+      ekMetre: 0,
+      isletme: 0,
+      yatirim: 0,
+      isletmeYuzde: null,
+      yatirimYuzde: null,
+    };
+  }
+  const is = h.isletme;
+  const ya = h.yatirim;
+  const ek = is + ya;
+  return {
+    ekMetre: ek,
+    isletme: is,
+    yatirim: ya,
+    isletmeYuzde: ek > 0 ? (is / ek) * 100 : null,
+    yatirimYuzde: ek > 0 ? (ya / ek) * 100 : null,
+  };
+}
+
+/**
+ * Seçilen yıl için eklenen hat (m) ve işletme / yatırım yüzdeleri.
+ * `mevcutKovasiYili` (genelde 2013): Excel "< 2013" sütununda yalnızca mevcut hat varsa
+ * ek metre olarak mevcut stoku gösterir; % yoktur.
+ */
+export function hatHucreYilOzeti(
+  h: HatUzunlukHucre | null | undefined,
+  yil: number,
+  mevcutKovasiYili?: number | null
+): HatHucreYilOzeti {
   const { isletme, yatirim } = hatYilHucre(h, yil);
-  const ekMetre = isletme + yatirim;
-  const ext = ekMetre;
+  let ekMetre = isletme + yatirim;
+  if (
+    ekMetre <= 0 &&
+    mevcutKovasiYili != null &&
+    yil === mevcutKovasiYili &&
+    h?.mevcut != null &&
+    h.mevcut > 0
+  ) {
+    ekMetre = h.mevcut;
+  }
+  const ext = isletme + yatirim;
+  const yuzdeGecerli = ext > 0;
   return {
     ekMetre,
     isletme,
     yatirim,
-    isletmeYuzde: ext > 0 ? (isletme / ext) * 100 : null,
-    yatirimYuzde: ext > 0 ? (yatirim / ext) * 100 : null,
+    isletmeYuzde: yuzdeGecerli ? (isletme / ext) * 100 : null,
+    yatirimYuzde: yuzdeGecerli ? (yatirim / ext) * 100 : null,
   };
 }

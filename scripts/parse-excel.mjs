@@ -348,9 +348,17 @@ function parseHatYilHucre(cell) {
 /** İçme / Kanal / Yağmur hat uzunluğu sayfaları (İLÇE + yıllık İŞLETME/YATIRIM + TOPLAM sütunu) */
 function readHatUzunlukByIlce(wb, sheetName) {
   const rows = readRows(wb, sheetName);
-  if (rows.length < 3) return {};
+  if (rows.length < 3) {
+    return { byIlce: {}, mevcutKovasiYili: null };
+  }
   const h0 = rows[0] ?? [];
   const h1 = rows[1] ?? [];
+  let mevcutKovasiYili = null;
+  const labMevcut = textCell(h1[1]).toLocaleUpperCase("tr-TR");
+  if (labMevcut.includes("MEVCUT")) {
+    const yM = parseHatYilHucre(h0[1]);
+    if (yM != null) mevcutKovasiYili = yM;
+  }
   let toplamCol = -1;
   for (let j = h0.length - 1; j >= 1; j--) {
     const cell = h0[j];
@@ -401,10 +409,15 @@ function readHatUzunlukByIlce(wb, sheetName) {
     }
     out[ilceRaw] = { mevcut, isletme, yatirim, toplam, byYear };
   }
-  return out;
+  return { byIlce: out, mevcutKovasiYili };
 }
 
-function mergeHatUzunlukPayload(icmeByIlce, kanalByIlce, yagmurByIlce) {
+function mergeHatUzunlukPayload(
+  icmeByIlce,
+  kanalByIlce,
+  yagmurByIlce,
+  mevcutKovasiYili
+) {
   const ilceSet = new Set([
     ...Object.keys(icmeByIlce),
     ...Object.keys(kanalByIlce),
@@ -431,6 +444,9 @@ function mergeHatUzunlukPayload(icmeByIlce, kanalByIlce, yagmurByIlce) {
   yilTopla(icmeByIlce);
   yilTopla(kanalByIlce);
   yilTopla(yagmurByIlce);
+  if (mevcutKovasiYili != null && Number.isFinite(mevcutKovasiYili)) {
+    yilSet.add(mevcutKovasiYili);
+  }
   const yillar = [...yilSet].filter((n) => Number.isFinite(n)).sort((a, b) => a - b);
 
   return {
@@ -441,6 +457,7 @@ function mergeHatUzunlukPayload(icmeByIlce, kanalByIlce, yagmurByIlce) {
     },
     ilceler: satirlar,
     yillar,
+    mevcutKovasiYili: mevcutKovasiYili ?? null,
     ozet: {
       icmeSuyuMetre: sumToplam(icmeByIlce),
       kanalizasyonMetre: sumToplam(kanalByIlce),
@@ -589,7 +606,17 @@ function main() {
   const icmeHat = readHatUzunlukByIlce(wb, "İçme Suyu Hat Uzunluğu");
   const kanalHat = readHatUzunlukByIlce(wb, "Kanalizasyon Hat Uzunluğu");
   const yagmurHat = readHatUzunlukByIlce(wb, "Yağmur Suyu Hat Uzunluğu");
-  const hatUzunluklari = mergeHatUzunlukPayload(icmeHat, kanalHat, yagmurHat);
+  const mevcutKovasiYili =
+    icmeHat.mevcutKovasiYili ??
+    kanalHat.mevcutKovasiYili ??
+    yagmurHat.mevcutKovasiYili ??
+    null;
+  const hatUzunluklari = mergeHatUzunlukPayload(
+    icmeHat.byIlce,
+    kanalHat.byIlce,
+    yagmurHat.byIlce,
+    mevcutKovasiYili
+  );
 
   const payload = {
     generatedAt: new Date().toISOString(),

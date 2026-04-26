@@ -17,6 +17,19 @@ import type {
   IlcePerformansSatiri,
   IlcePerformansToplam,
 } from "@/lib/dashboard";
+
+/** Hat tablosu: tüm yılların işletme+yatırım eklemesi (Excel satır toplamı) */
+const HAT_YIL_TUMU = "tumu" as const;
+type HatYilSecimi = number | typeof HAT_YIL_TUMU;
+
+function hatSatirOzeti(
+  h: HatUzunlukHucre | null,
+  yil: HatYilSecimi,
+  mevcutKovasiYili: number | null
+) {
+  if (yil === HAT_YIL_TUMU) return hatHucreTumYillarOzeti(h);
+  return hatHucreYilOzeti(h, yil, mevcutKovasiYili);
+}
 import {
   aggregate,
   collectKaynakDepoSummary,
@@ -24,6 +37,7 @@ import {
   elektrikDetayDonemToplam,
   elektrikDetayIlceDonem,
   filterRecords,
+  hatHucreTumYillarOzeti,
   hatHucreYilOzeti,
   recordTahakkukDönem,
   statsForMonth,
@@ -94,18 +108,18 @@ export default function Dashboard({ data }: Props) {
   );
   const [selectedYear, setSelectedYear] = useState<number>(dataYear);
   /** Hat uzunluğu Excel sütunlarındaki takvim yılı (üstteki 2025/2026’dan bağımsız) */
-  const [hatEnvYili, setHatEnvYili] = useState<number>(dataYear);
+  const [hatEnvYili, setHatEnvYili] = useState<HatYilSecimi>(HAT_YIL_TUMU);
 
   useEffect(() => {
-    if (!hatYillarList.length) return;
-    setHatEnvYili((y) =>
-      hatYillarList.includes(y)
-        ? y
-        : hatYillarList.includes(dataYear)
-          ? dataYear
-          : hatYillarList[hatYillarList.length - 1]!
-    );
-  }, [hatYillarList, dataYear]);
+    if (hatEnvYili === HAT_YIL_TUMU) return;
+    if (!hatYillarList.length) {
+      setHatEnvYili(HAT_YIL_TUMU);
+      return;
+    }
+    if (!hatYillarList.includes(hatEnvYili as number)) {
+      setHatEnvYili(HAT_YIL_TUMU);
+    }
+  }, [hatYillarList, hatEnvYili]);
 
   /** Seçilen yıl için veri var mı? (yalnızca dataYear'a ait kayıtlar mevcut) */
   const hasDataForYear = selectedYear === dataYear;
@@ -219,6 +233,21 @@ export default function Dashboard({ data }: Props) {
     : (data.months[monthIndex] ?? `Ay ${monthIndex + 1}`);
   const elektrik = data.elektrik;
   const hatUzunluklari = data.hatUzunluklari;
+  const hatMevcutKovasiYili = data.hatUzunluklari?.mevcutKovasiYili ?? null;
+
+  /**
+   * Elektrik Excel ilçe bazlı; mahalle seçiliyken ilçe içindeki abone oranına göre
+   * yaklaşık pay (özetteki ilçe+mahalle filtresiyle uyum).
+   */
+  const elektrikMahalleOrani = useMemo(() => {
+    if (!ilce.trim() || !mahalle.trim()) return 1;
+    const ilceAbone = data.records
+      .filter((r) => r.ilce === ilce)
+      .reduce((s, r) => s + r.abone, 0);
+    const mahAbone = filtered.reduce((s, r) => s + r.abone, 0);
+    if (ilceAbone <= 0) return 1;
+    return Math.min(1, Math.max(0, mahAbone / ilceAbone));
+  }, [ilce, mahalle, data.records, filtered]);
 
   /** Elektrik: üst yıl = veri dosyası yılı (dataYear) iken ay/ilçe; plan yılı (2026) henüz boş */
   const elektrikDonem = useMemo(() => {
@@ -231,7 +260,7 @@ export default function Dashboard({ data }: Props) {
     if (!yDet || !kDet || !iDet) return null;
 
     if (!yilOk) {
-      const detayTablo = e.detay.map((d) => ({
+      const detayBos = e.detay.map((d) => ({
         key: d.key,
         label: d.label,
         kwh: null as number | null,
@@ -240,7 +269,7 @@ export default function Dashboard({ data }: Props) {
       }));
       return {
         yilOk: false,
-        detayTablo,
+        detayTablo: detayBos,
         toplamKwh: null as number | null,
         toplamTahakkuk: null as number | null,
         suTahakkuku: null as number | null,
@@ -253,10 +282,11 @@ export default function Dashboard({ data }: Props) {
           kanalizasyonKwh: number;
           icmeKwh: number;
         }>,
+        mahalleOrani: elektrikMahalleOrani,
       };
     }
 
-    const detayTablo = e.detay.map((d) => {
+    let detayTablo = e.detay.map((d) => {
       const v = ilce.trim()
         ? elektrikDetayIlceDonem(d, ilce, isYearly, monthIndex)
         : elektrikDetayDonemToplam(d, isYearly, monthIndex);
@@ -274,16 +304,16 @@ export default function Dashboard({ data }: Props) {
       };
     });
 
-    const toplamKwh = detayTablo.reduce((s, r) => s + r.kwh, 0);
-    const toplamTah = detayTablo.reduce((s, r) => s + r.tahakkuk, 0);
+    let toplamKwh = detayTablo.reduce((s, r) => s + r.kwh, 0);
+    let toplamTah = detayTablo.reduce((s, r) => s + r.tahakkuk, 0);
     const suTah = kpi.totalTahakkuk;
-    const netGelir = suTah - toplamTah;
+    let netGelir = suTah - toplamTah;
 
     const ilceListe = ilce.trim()
       ? [ilce]
       : (e.ilceDetay?.map((r) => r.ilce) ?? data.ilceler);
 
-    const ilceTablo = ilceListe.map((ilceAdi) => {
+    let ilceTablo = ilceListe.map((ilceAdi) => {
       const y = elektrikDetayIlceDonem(yDet, ilceAdi, isYearly, monthIndex);
       const k = elektrikDetayIlceDonem(kDet, ilceAdi, isYearly, monthIndex);
       const ic = elektrikDetayIlceDonem(iDet, ilceAdi, isYearly, monthIndex);
@@ -299,6 +329,26 @@ export default function Dashboard({ data }: Props) {
       };
     });
 
+    const oran = elektrikMahalleOrani;
+    if (oran !== 1) {
+      detayTablo = detayTablo.map((r) => ({
+        ...r,
+        kwh: r.kwh * oran,
+        tahakkuk: r.tahakkuk * oran,
+      }));
+      ilceTablo = ilceTablo.map((r) => ({
+        ...r,
+        toplamKwh: r.toplamKwh * oran,
+        toplamTahakkuk: r.toplamTahakkuk * oran,
+        yagmurKwh: r.yagmurKwh * oran,
+        kanalizasyonKwh: r.kanalizasyonKwh * oran,
+        icmeKwh: r.icmeKwh * oran,
+      }));
+      toplamKwh *= oran;
+      toplamTah *= oran;
+      netGelir = suTah - toplamTah;
+    }
+
     return {
       yilOk,
       detayTablo,
@@ -307,6 +357,7 @@ export default function Dashboard({ data }: Props) {
       suTahakkuku: suTah,
       netGelir,
       ilceTablo,
+      mahalleOrani: oran,
     };
   }, [
     data.elektrik,
@@ -317,12 +368,14 @@ export default function Dashboard({ data }: Props) {
     isYearly,
     monthIndex,
     kpi.totalTahakkuk,
+    elektrikMahalleOrani,
   ]);
 
-  /** Hat uzunlukları: Excel takvim yılı (hatEnvYili) + ilçe */
+  /** Hat uzunlukları: Excel takvim yılı veya tüm yıllar + ilçe */
   const hatYilOzet = useMemo(() => {
     const h = data.hatUzunluklari;
     if (!h?.ilceler?.length) return null;
+    const mk = h.mevcutKovasiYili ?? null;
     const rows = ilce.trim()
       ? h.ilceler.filter((r) => r.ilce === ilce)
       : h.ilceler;
@@ -336,16 +389,18 @@ export default function Dashboard({ data }: Props) {
     const toplaTip = (pick: (r: HatIlceSatiri) => HatUzunlukHucre | null) => {
       let is = 0;
       let ya = 0;
+      let ek = 0;
       for (const row of rows) {
-        const o = hatHucreYilOzeti(pick(row), hatEnvYili);
+        const o = hatSatirOzeti(pick(row), hatEnvYili, mk);
         is += o.isletme;
         ya += o.yatirim;
+        ek += o.ekMetre;
       }
-      const ek = is + ya;
+      const ext = is + ya;
       return {
         ekMetre: ek,
-        isletmeYuzde: ek > 0 ? (is / ek) * 100 : null,
-        yatirimYuzde: ek > 0 ? (ya / ek) * 100 : null,
+        isletmeYuzde: ext > 0 ? (is / ext) * 100 : null,
+        yatirimYuzde: ext > 0 ? (ya / ext) * 100 : null,
       };
     };
 
@@ -363,6 +418,13 @@ export default function Dashboard({ data }: Props) {
       activeSection === "muhtar" ||
       activeSection === "altyapi" ||
       activeSection === "ilce");
+
+  const hatYilBaslik =
+    hatEnvYili === HAT_YIL_TUMU
+      ? "Tümü"
+      : hatMevcutKovasiYili != null && hatEnvYili === hatMevcutKovasiYili
+        ? `${hatMevcutKovasiYili} (mevcut)`
+        : `${hatEnvYili}`;
 
   const selectCls =
     "rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-sm text-zinc-900 disabled:opacity-50 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100";
@@ -892,30 +954,39 @@ export default function Dashboard({ data }: Props) {
                       bağımsız). <strong>İlçe</strong> üst filtreyle daraltılır.
                       Kümülatif Excel toplamı tabloda referans sütunlarında durur.
                     </p>
-                    {hatYillarList.length > 0 && (
-                      <label className="flex max-w-[220px] flex-col gap-1 text-xs font-medium text-zinc-600 dark:text-zinc-400">
-                        Hat tablosu yılı (Excel)
-                        <select
-                          className={selectCls}
-                          value={hatEnvYili}
-                          onChange={(e) => setHatEnvYili(Number(e.target.value))}
-                        >
-                          {hatYillarList.map((y) => (
+                    <label className="flex max-w-[280px] flex-col gap-1 text-xs font-medium text-zinc-600 dark:text-zinc-400">
+                      Hat tablosu (Excel yılı veya tümü)
+                      <select
+                        className={selectCls}
+                        value={hatEnvYili === HAT_YIL_TUMU ? "tumu" : hatEnvYili}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setHatEnvYili(v === "tumu" ? HAT_YIL_TUMU : Number(v));
+                        }}
+                      >
+                        <option value="tumu">Tümü (tüm yıllar eklemesi)</option>
+                        {hatMevcutKovasiYili != null && (
+                          <option value={hatMevcutKovasiYili}>
+                            {hatMevcutKovasiYili} (mevcut hat, Excel &quot;&lt; 2013&quot;)
+                          </option>
+                        )}
+                        {hatYillarList
+                          .filter((y) => y !== hatMevcutKovasiYili)
+                          .map((y) => (
                             <option key={y} value={y}>
                               {y}
                             </option>
                           ))}
-                        </select>
-                      </label>
-                    )}
+                      </select>
+                    </label>
                     {hatYilOzet && (
                       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
                         <MiniKpi
-                          label={`İçme · ${hatEnvYili} eklenen (m)`}
+                          label={`İçme · ${hatYilBaslik} (m)`}
                           value={`${formatMetreCell(hatYilOzet.icme.ekMetre)} m`}
                         />
                         <MiniKpi
-                          label={`İçme · işl. / yat. % (${hatEnvYili})`}
+                          label={`İçme · işl. / yat. % (${hatYilBaslik})`}
                           value={
                             hatYilOzet.icme.isletmeYuzde != null
                               ? `% ${nf1.format(hatYilOzet.icme.isletmeYuzde)} / % ${nf1.format(hatYilOzet.icme.yatirimYuzde ?? 0)}`
@@ -923,11 +994,11 @@ export default function Dashboard({ data }: Props) {
                           }
                         />
                         <MiniKpi
-                          label={`Kanal · ${hatEnvYili} eklenen (m)`}
+                          label={`Kanal · ${hatYilBaslik} (m)`}
                           value={`${formatMetreCell(hatYilOzet.kanal.ekMetre)} m`}
                         />
                         <MiniKpi
-                          label={`Kanal · işl. / yat. % (${hatEnvYili})`}
+                          label={`Kanal · işl. / yat. % (${hatYilBaslik})`}
                           value={
                             hatYilOzet.kanal.isletmeYuzde != null
                               ? `% ${nf1.format(hatYilOzet.kanal.isletmeYuzde)} / % ${nf1.format(hatYilOzet.kanal.yatirimYuzde ?? 0)}`
@@ -935,11 +1006,11 @@ export default function Dashboard({ data }: Props) {
                           }
                         />
                         <MiniKpi
-                          label={`Yağmur · ${hatEnvYili} eklenen (m)`}
+                          label={`Yağmur · ${hatYilBaslik} (m)`}
                           value={`${formatMetreCell(hatYilOzet.yagmur.ekMetre)} m`}
                         />
                         <MiniKpi
-                          label={`Yağmur · işl. / yat. % (${hatEnvYili})`}
+                          label={`Yağmur · işl. / yat. % (${hatYilBaslik})`}
                           value={
                             hatYilOzet.yagmur.isletmeYuzde != null
                               ? `% ${nf1.format(hatYilOzet.yagmur.isletmeYuzde)} / % ${nf1.format(hatYilOzet.yagmur.yatirimYuzde ?? 0)}`
@@ -962,7 +1033,7 @@ export default function Dashboard({ data }: Props) {
                               İlçe
                             </th>
                             <th className="px-3 py-2 text-right font-semibold text-zinc-700 dark:text-zinc-300">
-                              İçme ({hatEnvYili}) m
+                              İçme ({hatYilBaslik}) m
                             </th>
                             <th className="px-3 py-2 text-right font-semibold text-zinc-700 dark:text-zinc-300">
                               İçme işl. %
@@ -971,7 +1042,7 @@ export default function Dashboard({ data }: Props) {
                               İçme yat. %
                             </th>
                             <th className="px-3 py-2 text-right font-semibold text-zinc-700 dark:text-zinc-300">
-                              Kanal ({hatEnvYili}) m
+                              Kanal ({hatYilBaslik}) m
                             </th>
                             <th className="px-3 py-2 text-right font-semibold text-zinc-700 dark:text-zinc-300">
                               Kanal işl. %
@@ -980,7 +1051,7 @@ export default function Dashboard({ data }: Props) {
                               Kanal yat. %
                             </th>
                             <th className="px-3 py-2 text-right font-semibold text-zinc-700 dark:text-zinc-300">
-                              Yağmur ({hatEnvYili}) m
+                              Yağmur ({hatYilBaslik}) m
                             </th>
                             <th className="px-3 py-2 text-right font-semibold text-zinc-700 dark:text-zinc-300">
                               Yağmur işl. %
@@ -1001,9 +1072,21 @@ export default function Dashboard({ data }: Props) {
                         </thead>
                         <tbody>
                           {(hatYilOzet?.rows ?? hatUzunluklari.ilceler).map((row) => {
-                            const ic = hatHucreYilOzeti(row.icmeSuyu, hatEnvYili);
-                            const ka = hatHucreYilOzeti(row.kanalizasyon, hatEnvYili);
-                            const ya = hatHucreYilOzeti(row.yagmurSuyu, hatEnvYili);
+                            const ic = hatSatirOzeti(
+                              row.icmeSuyu,
+                              hatEnvYili,
+                              hatMevcutKovasiYili
+                            );
+                            const ka = hatSatirOzeti(
+                              row.kanalizasyon,
+                              hatEnvYili,
+                              hatMevcutKovasiYili
+                            );
+                            const ya = hatSatirOzeti(
+                              row.yagmurSuyu,
+                              hatEnvYili,
+                              hatMevcutKovasiYili
+                            );
                             return (
                               <tr
                                 key={row.ilce}
@@ -1158,7 +1241,16 @@ export default function Dashboard({ data }: Props) {
                   tarafı içindir — elektrik sayfaları şimdilik yalnızca{" "}
                   <strong>{dataYear}</strong> dosyasındadır. <strong>İlçe</strong> ile
                   daraltılır. Su tahakkuku ve net gelir, aynı ay ve coğrafi filtredeki
-                  abone tahakkukunu kullanır.
+                  abone tahakkukunu                   kullanır.
+                  {elektrikDonem?.mahalleOrani != null &&
+                    elektrikDonem.mahalleOrani < 1 &&
+                    elektrikDonem.yilOk && (
+                    <span className="block pt-1 text-zinc-600 dark:text-zinc-400">
+                      Mahalle seçili: elektrik değerleri, ilçe içindeki{" "}
+                      <strong>abone oranı</strong> ile yaklaşık paya bölünür (Excel yalnızca
+                      ilçe bazlıdır).
+                    </span>
+                  )}
                   {!elektrikDonem?.yilOk && (
                     <span className="block pt-1 font-medium text-amber-700 dark:text-amber-400">
                       {selectedYear} plan yılı seçili: Excel&apos;e bu yıl için elektrik
