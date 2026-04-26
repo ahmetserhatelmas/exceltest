@@ -86,15 +86,26 @@ export default function Dashboard({ data }: Props) {
   const [kaynakPanelOpen, setKaynakPanelOpen] = useState(true);
 
   const dataYear = data.dataYear ?? 2025;
-  const hatYillarList = data.hatUzunluklari?.yillar ?? [];
-  const availableYears = useMemo(() => {
-    const s = new Set<number>([dataYear, dataYear + 1]);
-    for (const y of hatYillarList) {
-      if (typeof y === "number" && Number.isFinite(y)) s.add(y);
-    }
-    return [...s].sort((a, b) => a - b);
-  }, [dataYear, hatYillarList]);
+  /** Üst filtre: yalnızca veri yılı ve bir sonraki plan yılı (müşteri: 2025 / 2026) */
+  const availableYears = useMemo(() => [dataYear, dataYear + 1], [dataYear]);
+  const hatYillarList = useMemo(
+    () => data.hatUzunluklari?.yillar ?? [],
+    [data.hatUzunluklari?.yillar]
+  );
   const [selectedYear, setSelectedYear] = useState<number>(dataYear);
+  /** Hat uzunluğu Excel sütunlarındaki takvim yılı (üstteki 2025/2026’dan bağımsız) */
+  const [hatEnvYili, setHatEnvYili] = useState<number>(dataYear);
+
+  useEffect(() => {
+    if (!hatYillarList.length) return;
+    setHatEnvYili((y) =>
+      hatYillarList.includes(y)
+        ? y
+        : hatYillarList.includes(dataYear)
+          ? dataYear
+          : hatYillarList[hatYillarList.length - 1]!
+    );
+  }, [hatYillarList, dataYear]);
 
   /** Seçilen yıl için veri var mı? (yalnızca dataYear'a ait kayıtlar mevcut) */
   const hasDataForYear = selectedYear === dataYear;
@@ -209,7 +220,7 @@ export default function Dashboard({ data }: Props) {
   const elektrik = data.elektrik;
   const hatUzunluklari = data.hatUzunluklari;
 
-  /** Elektrik tabloları: yıl = veri yılı, ay/ilçe üst filtrelerle */
+  /** Elektrik: üst yıl = veri dosyası yılı (dataYear) iken ay/ilçe; plan yılı (2026) henüz boş */
   const elektrikDonem = useMemo(() => {
     const e = data.elektrik;
     if (!e?.detay?.length) return null;
@@ -218,6 +229,32 @@ export default function Dashboard({ data }: Props) {
     const kDet = e.detay.find((x) => x.key === "kanalizasyon");
     const iDet = e.detay.find((x) => x.key === "icme");
     if (!yDet || !kDet || !iDet) return null;
+
+    if (!yilOk) {
+      const detayTablo = e.detay.map((d) => ({
+        key: d.key,
+        label: d.label,
+        kwh: null as number | null,
+        tahakkuk: null as number | null,
+        countOut: null as number | null,
+      }));
+      return {
+        yilOk: false,
+        detayTablo,
+        toplamKwh: null as number | null,
+        toplamTahakkuk: null as number | null,
+        suTahakkuku: null as number | null,
+        netGelir: null as number | null,
+        ilceTablo: [] as Array<{
+          ilce: string;
+          toplamKwh: number;
+          toplamTahakkuk: number;
+          yagmurKwh: number;
+          kanalizasyonKwh: number;
+          icmeKwh: number;
+        }>,
+      };
+    }
 
     const detayTablo = e.detay.map((d) => {
       const v = ilce.trim()
@@ -231,8 +268,8 @@ export default function Dashboard({ data }: Props) {
       return {
         key: d.key,
         label: d.label,
-        kwh: yilOk ? v.kwh : 0,
-        tahakkuk: yilOk ? v.tahakkuk : 0,
+        kwh: v.kwh,
+        tahakkuk: v.tahakkuk,
         countOut,
       };
     });
@@ -250,15 +287,15 @@ export default function Dashboard({ data }: Props) {
       const y = elektrikDetayIlceDonem(yDet, ilceAdi, isYearly, monthIndex);
       const k = elektrikDetayIlceDonem(kDet, ilceAdi, isYearly, monthIndex);
       const ic = elektrikDetayIlceDonem(iDet, ilceAdi, isYearly, monthIndex);
-      const ty = yilOk ? y.kwh + k.kwh + ic.kwh : 0;
-      const tt = yilOk ? y.tahakkuk + k.tahakkuk + ic.tahakkuk : 0;
+      const ty = y.kwh + k.kwh + ic.kwh;
+      const tt = y.tahakkuk + k.tahakkuk + ic.tahakkuk;
       return {
         ilce: ilceAdi,
         toplamKwh: ty,
         toplamTahakkuk: tt,
-        yagmurKwh: yilOk ? y.kwh : 0,
-        kanalizasyonKwh: yilOk ? k.kwh : 0,
-        icmeKwh: yilOk ? ic.kwh : 0,
+        yagmurKwh: y.kwh,
+        kanalizasyonKwh: k.kwh,
+        icmeKwh: ic.kwh,
       };
     });
 
@@ -282,7 +319,7 @@ export default function Dashboard({ data }: Props) {
     kpi.totalTahakkuk,
   ]);
 
-  /** Hat uzunlukları: seçilen yıl + ilçe için eklenen metre ve işletme/yatırım % */
+  /** Hat uzunlukları: Excel takvim yılı (hatEnvYili) + ilçe */
   const hatYilOzet = useMemo(() => {
     const h = data.hatUzunluklari;
     if (!h?.ilceler?.length) return null;
@@ -300,7 +337,7 @@ export default function Dashboard({ data }: Props) {
       let is = 0;
       let ya = 0;
       for (const row of rows) {
-        const o = hatHucreYilOzeti(pick(row), selectedYear);
+        const o = hatHucreYilOzeti(pick(row), hatEnvYili);
         is += o.isletme;
         ya += o.yatirim;
       }
@@ -318,7 +355,7 @@ export default function Dashboard({ data }: Props) {
       kanal: toplaTip((r) => r.kanalizasyon),
       yagmur: toplaTip((r) => r.yagmurSuyu),
     };
-  }, [data.hatUzunluklari, ilce, selectedYear]);
+  }, [data.hatUzunluklari, ilce, hatEnvYili]);
 
   const aboneSekmesiBos =
     !hasDataForYear &&
@@ -346,7 +383,10 @@ export default function Dashboard({ data }: Props) {
       {/* ── FİLTRELER ── */}
       <div className="border-b border-zinc-200 bg-white px-6 py-3 dark:border-zinc-800 dark:bg-zinc-950">
         <div className="flex flex-wrap items-end gap-3">
-          <label className="flex flex-col gap-1 text-xs font-medium text-zinc-600 dark:text-zinc-400">
+          <label
+            className="flex flex-col gap-1 text-xs font-medium text-zinc-600 dark:text-zinc-400"
+            title="Abone ve su tüketimi: veri yılı ile bir sonraki plan yılı (ör. 2025 / 2026)."
+          >
             Yıl
             <select
               className={selectCls}
@@ -361,7 +401,10 @@ export default function Dashboard({ data }: Props) {
             </select>
           </label>
 
-          <label className="flex flex-col gap-1 text-xs font-medium text-zinc-600 dark:text-zinc-400">
+          <label
+            className="flex flex-col gap-1 text-xs font-medium text-zinc-600 dark:text-zinc-400"
+            title="Elektrik tüketimi Excel’de ay sütunlarına göre filtrelenir."
+          >
             Ay
             <select
               className={selectCls}
@@ -419,11 +462,7 @@ export default function Dashboard({ data }: Props) {
               {selectedMonthLabel} {dataYear}
             </strong>
             {hatYillarList.length > 0 && (
-              <>
-                {" "}
-                · Hat yılları: {hatYillarList[0]}–
-                {hatYillarList[hatYillarList.length - 1]}
-              </>
+              <> · Hat envanteri yılı: &quot;Altyapı Hatları&quot; sekmesinden</>
             )}
           </p>
         </div>
@@ -475,10 +514,10 @@ export default function Dashboard({ data }: Props) {
               subtitle={
                 elektrikDonem?.yilOk
                   ? `${isYearly ? "yıllık" : selectedMonthLabel}${ilce ? ` · ${ilce}` : ""}`
-                  : `${dataYear} veri yılı dışı`
+                  : `${selectedYear} plan · elektrik henüz yok`
               }
               value={
-                elektrikDonem
+                elektrikDonem?.toplamTahakkuk != null
                   ? `${nf.format(elektrikDonem.toplamTahakkuk)} ₺`
                   : elektrik
                     ? `${nf.format(elektrik.toplamElektrikTahakkuku)} ₺`
@@ -490,7 +529,7 @@ export default function Dashboard({ data }: Props) {
               title="Net gelir"
               subtitle="su tah. − elektrik tah. (üst filtreler)"
               value={
-                elektrikDonem
+                elektrikDonem?.netGelir != null
                   ? `${nf.format(elektrikDonem.netGelir)} ₺`
                   : elektrik
                     ? `${nf.format(elektrik.netGelir)} ₺`
@@ -555,8 +594,10 @@ export default function Dashboard({ data }: Props) {
                   {selectedYear} yılı için abone / su tüketim verisi yok
                 </p>
                 <p className="max-w-md text-sm text-zinc-500">
-                  Altyapı hatları ve elektrik özetine üst menüden geçebilirsiniz; hat
-                  tabloları seçilen yıla göre güncellenir.
+                  Altyapı Hatları ve Elektrik Özeti sekmelerine geçebilirsiniz. Hat
+                  uzunluğu için yılı &quot;Altyapı Hatları&quot; içindeki seçicide
+                  seçin; elektrik için detay{" "}
+                  <strong>ay</strong> filtresiyle {dataYear} dosyasından gelir.
                 </p>
               </div>
             ) : (
@@ -798,8 +839,9 @@ export default function Dashboard({ data }: Props) {
                   <p className="mb-3 text-xs text-zinc-500 dark:text-zinc-500">
                     Veri.xlsx, <strong>KAYNAK-TERFİ-DEPO</strong> sayfası;
                     seçili ilçe/mahalle defterleriyle eşleşen adlar (benzersiz
-                    liste). Yıl filtresi bu listeyi değiştirmez; hat uzunlukları ve
-                    elektrik özetinde yıl/ay seçimi kullanılır.
+                    liste). Üstteki yıl bu listeyi değiştirmez. Hat uzunluğu yılı{" "}
+                    <strong>Altyapı Hatları</strong> sekmesindedir; elektrikte dönem{" "}
+                    <strong>ay</strong> seçimidir.
                   </p>
                   {kaynakOzeti ? (
                     <div className="flex flex-col gap-3 text-zinc-800 dark:text-zinc-200">
@@ -844,20 +886,36 @@ export default function Dashboard({ data }: Props) {
                       Kaynak:{" "}
                       <strong>{hatUzunluklari.sheets.icmeSuyu}</strong>,{" "}
                       <strong>{hatUzunluklari.sheets.kanalizasyon}</strong>,{" "}
-                      <strong>{hatUzunluklari.sheets.yagmurSuyu}</strong>. Üstteki{" "}
-                      <strong>yıl</strong> ve <strong>ilçe</strong> seçimine göre tablo,
-                      seçilen yılda eklenen hat (işletme + yatırım, m) ve bu eklemenin
-                      içindeki işletme / yatırım yüzdelerini gösterir. Kümülatif Excel
-                      toplamı aşağıda referans olarak durur.
+                      <strong>{hatUzunluklari.sheets.yagmurSuyu}</strong>. Hat uzunluğu
+                      Excel&apos;de <strong>yıl</strong> sütunlarındaki işletme + yatırım
+                      eklemelerine göredir (üstteki 2025/2026 abone plan yılından
+                      bağımsız). <strong>İlçe</strong> üst filtreyle daraltılır.
+                      Kümülatif Excel toplamı tabloda referans sütunlarında durur.
                     </p>
+                    {hatYillarList.length > 0 && (
+                      <label className="flex max-w-[220px] flex-col gap-1 text-xs font-medium text-zinc-600 dark:text-zinc-400">
+                        Hat tablosu yılı (Excel)
+                        <select
+                          className={selectCls}
+                          value={hatEnvYili}
+                          onChange={(e) => setHatEnvYili(Number(e.target.value))}
+                        >
+                          {hatYillarList.map((y) => (
+                            <option key={y} value={y}>
+                              {y}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    )}
                     {hatYilOzet && (
                       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
                         <MiniKpi
-                          label={`İçme · ${selectedYear} eklenen (m)`}
+                          label={`İçme · ${hatEnvYili} eklenen (m)`}
                           value={`${formatMetreCell(hatYilOzet.icme.ekMetre)} m`}
                         />
                         <MiniKpi
-                          label={`İçme · işl. / yat. % (${selectedYear})`}
+                          label={`İçme · işl. / yat. % (${hatEnvYili})`}
                           value={
                             hatYilOzet.icme.isletmeYuzde != null
                               ? `% ${nf1.format(hatYilOzet.icme.isletmeYuzde)} / % ${nf1.format(hatYilOzet.icme.yatirimYuzde ?? 0)}`
@@ -865,11 +923,11 @@ export default function Dashboard({ data }: Props) {
                           }
                         />
                         <MiniKpi
-                          label={`Kanal · ${selectedYear} eklenen (m)`}
+                          label={`Kanal · ${hatEnvYili} eklenen (m)`}
                           value={`${formatMetreCell(hatYilOzet.kanal.ekMetre)} m`}
                         />
                         <MiniKpi
-                          label={`Kanal · işl. / yat. % (${selectedYear})`}
+                          label={`Kanal · işl. / yat. % (${hatEnvYili})`}
                           value={
                             hatYilOzet.kanal.isletmeYuzde != null
                               ? `% ${nf1.format(hatYilOzet.kanal.isletmeYuzde)} / % ${nf1.format(hatYilOzet.kanal.yatirimYuzde ?? 0)}`
@@ -877,11 +935,11 @@ export default function Dashboard({ data }: Props) {
                           }
                         />
                         <MiniKpi
-                          label={`Yağmur · ${selectedYear} eklenen (m)`}
+                          label={`Yağmur · ${hatEnvYili} eklenen (m)`}
                           value={`${formatMetreCell(hatYilOzet.yagmur.ekMetre)} m`}
                         />
                         <MiniKpi
-                          label={`Yağmur · işl. / yat. % (${selectedYear})`}
+                          label={`Yağmur · işl. / yat. % (${hatEnvYili})`}
                           value={
                             hatYilOzet.yagmur.isletmeYuzde != null
                               ? `% ${nf1.format(hatYilOzet.yagmur.isletmeYuzde)} / % ${nf1.format(hatYilOzet.yagmur.yatirimYuzde ?? 0)}`
@@ -904,7 +962,7 @@ export default function Dashboard({ data }: Props) {
                               İlçe
                             </th>
                             <th className="px-3 py-2 text-right font-semibold text-zinc-700 dark:text-zinc-300">
-                              İçme ({selectedYear}) m
+                              İçme ({hatEnvYili}) m
                             </th>
                             <th className="px-3 py-2 text-right font-semibold text-zinc-700 dark:text-zinc-300">
                               İçme işl. %
@@ -913,7 +971,7 @@ export default function Dashboard({ data }: Props) {
                               İçme yat. %
                             </th>
                             <th className="px-3 py-2 text-right font-semibold text-zinc-700 dark:text-zinc-300">
-                              Kanal ({selectedYear}) m
+                              Kanal ({hatEnvYili}) m
                             </th>
                             <th className="px-3 py-2 text-right font-semibold text-zinc-700 dark:text-zinc-300">
                               Kanal işl. %
@@ -922,7 +980,7 @@ export default function Dashboard({ data }: Props) {
                               Kanal yat. %
                             </th>
                             <th className="px-3 py-2 text-right font-semibold text-zinc-700 dark:text-zinc-300">
-                              Yağmur ({selectedYear}) m
+                              Yağmur ({hatEnvYili}) m
                             </th>
                             <th className="px-3 py-2 text-right font-semibold text-zinc-700 dark:text-zinc-300">
                               Yağmur işl. %
@@ -943,9 +1001,9 @@ export default function Dashboard({ data }: Props) {
                         </thead>
                         <tbody>
                           {(hatYilOzet?.rows ?? hatUzunluklari.ilceler).map((row) => {
-                            const ic = hatHucreYilOzeti(row.icmeSuyu, selectedYear);
-                            const ka = hatHucreYilOzeti(row.kanalizasyon, selectedYear);
-                            const ya = hatHucreYilOzeti(row.yagmurSuyu, selectedYear);
+                            const ic = hatHucreYilOzeti(row.icmeSuyu, hatEnvYili);
+                            const ka = hatHucreYilOzeti(row.kanalizasyon, hatEnvYili);
+                            const ya = hatHucreYilOzeti(row.yagmurSuyu, hatEnvYili);
                             return (
                               <tr
                                 key={row.ilce}
@@ -1094,16 +1152,18 @@ export default function Dashboard({ data }: Props) {
             {activeSection === "elektrik" && (
               <div className="flex flex-col gap-4">
                 <p className="text-xs text-zinc-500 dark:text-zinc-500">
-                  Elektrik tüketim/tahakkuk: Yağmur / Kanalizasyon / İçme suyu sayfalarındaki{" "}
-                  <strong>aylık kWh ve TL</strong> sütunlarından hesaplanır. Üstteki{" "}
-                  <strong>yıl ({dataYear} veri dosyası)</strong>, <strong>ay</strong> ve{" "}
-                  <strong>ilçe</strong> seçimleri bu tablolara uygulanır. Su tahakkuku ve net
-                  gelir, özet KPI ile aynı dönem ve coğrafi filtredeki abone tahakkukunu
-                  kullanır.
+                  Elektrik tüketim/tahakkuk: Excel&apos;deki <strong>aylık kWh ve TL</strong>{" "}
+                  sütunlarından gelir; dönem seçimi üstteki <strong>ay</strong> filtresidir.
+                  Üstteki <strong>yıl</strong> ({dataYear} / {dataYear + 1}) abone ve su
+                  tarafı içindir — elektrik sayfaları şimdilik yalnızca{" "}
+                  <strong>{dataYear}</strong> dosyasındadır. <strong>İlçe</strong> ile
+                  daraltılır. Su tahakkuku ve net gelir, aynı ay ve coğrafi filtredeki
+                  abone tahakkukunu kullanır.
                   {!elektrikDonem?.yilOk && (
                     <span className="block pt-1 font-medium text-amber-700 dark:text-amber-400">
-                      Seçilen yıl ({selectedYear}) elektrik Excel yılı değil; elektrik
-                      değerleri 0 gösterilir.
+                      {selectedYear} plan yılı seçili: Excel&apos;e bu yıl için elektrik
+                      sayfaları eklendiğinde burada görünecek; şu an veri yok (boş
+                      görünmesi normal).
                     </span>
                   )}
                 </p>
@@ -1112,7 +1172,7 @@ export default function Dashboard({ data }: Props) {
                   <MiniKpi
                     label="Toplam Elektrik Tüketimi"
                     value={
-                      elektrikDonem
+                      elektrikDonem?.toplamKwh != null
                         ? `${nf0.format(elektrikDonem.toplamKwh)} kWh`
                         : elektrik
                           ? `${nf0.format(elektrik.toplamElektrikTuketimiKwh)} kWh`
@@ -1122,7 +1182,7 @@ export default function Dashboard({ data }: Props) {
                   <MiniKpi
                     label="Toplam Elektrik Tahakkuku"
                     value={
-                      elektrikDonem
+                      elektrikDonem?.toplamTahakkuk != null
                         ? `${nf.format(elektrikDonem.toplamTahakkuk)} ₺`
                         : elektrik
                           ? `${nf.format(elektrik.toplamElektrikTahakkuku)} ₺`
@@ -1132,7 +1192,7 @@ export default function Dashboard({ data }: Props) {
                   <MiniKpi
                     label="Toplam Su Tahakkuku"
                     value={
-                      elektrikDonem
+                      elektrikDonem?.suTahakkuku != null
                         ? `${nf.format(elektrikDonem.suTahakkuku)} ₺`
                         : elektrik
                           ? `${nf.format(elektrik.toplamSuTahakkuku)} ₺`
@@ -1142,7 +1202,7 @@ export default function Dashboard({ data }: Props) {
                   <MiniKpi
                     label="Net Gelir"
                     value={
-                      elektrikDonem
+                      elektrikDonem?.netGelir != null
                         ? `${nf.format(elektrikDonem.netGelir)} ₺`
                         : elektrik
                           ? `${nf.format(elektrik.netGelir)} ₺`
@@ -1179,10 +1239,10 @@ export default function Dashboard({ data }: Props) {
                             {d.label}
                           </td>
                           <td className="px-3 py-2 text-right tabular-nums text-zinc-800 dark:text-zinc-200">
-                            {nf0.format(d.kwh)}
+                            {d.kwh != null ? nf0.format(d.kwh) : "—"}
                           </td>
                           <td className="px-3 py-2 text-right tabular-nums text-zinc-800 dark:text-zinc-200">
-                            {nf.format(d.tahakkuk)}
+                            {d.tahakkuk != null ? nf.format(d.tahakkuk) : "—"}
                           </td>
                           <td className="px-3 py-2 text-right tabular-nums text-zinc-800 dark:text-zinc-200">
                             {d.countOut != null ? nf0.format(d.countOut) : "—"}
@@ -1218,31 +1278,44 @@ export default function Dashboard({ data }: Props) {
                       </tr>
                     </thead>
                     <tbody>
-                      {(elektrikDonem?.ilceTablo ?? []).map((d) => (
-                        <tr
-                          key={d.ilce}
-                          className="border-b border-zinc-100 dark:border-zinc-800/80"
-                        >
-                          <td className="px-3 py-2 font-medium text-zinc-900 dark:text-zinc-100">
-                            {d.ilce}
-                          </td>
-                          <td className="px-3 py-2 text-right tabular-nums text-zinc-800 dark:text-zinc-200">
-                            {nf0.format(d.toplamKwh)}
-                          </td>
-                          <td className="px-3 py-2 text-right tabular-nums text-zinc-800 dark:text-zinc-200">
-                            {nf.format(d.toplamTahakkuk)}
-                          </td>
-                          <td className="px-3 py-2 text-right tabular-nums text-zinc-800 dark:text-zinc-200">
-                            {nf0.format(d.yagmurKwh)}
-                          </td>
-                          <td className="px-3 py-2 text-right tabular-nums text-zinc-800 dark:text-zinc-200">
-                            {nf0.format(d.kanalizasyonKwh)}
-                          </td>
-                          <td className="px-3 py-2 text-right tabular-nums text-zinc-800 dark:text-zinc-200">
-                            {nf0.format(d.icmeKwh)}
+                      {elektrikDonem?.yilOk === false ? (
+                        <tr>
+                          <td
+                            colSpan={6}
+                            className="px-3 py-6 text-center text-sm text-zinc-500 dark:text-zinc-400"
+                          >
+                            İlçe kırılımı için üstte <strong>{dataYear}</strong> yılını
+                            seçin. {selectedYear} planında henüz elektrik Excel verisi
+                            yok.
                           </td>
                         </tr>
-                      ))}
+                      ) : (
+                        (elektrikDonem?.ilceTablo ?? []).map((d) => (
+                          <tr
+                            key={d.ilce}
+                            className="border-b border-zinc-100 dark:border-zinc-800/80"
+                          >
+                            <td className="px-3 py-2 font-medium text-zinc-900 dark:text-zinc-100">
+                              {d.ilce}
+                            </td>
+                            <td className="px-3 py-2 text-right tabular-nums text-zinc-800 dark:text-zinc-200">
+                              {nf0.format(d.toplamKwh)}
+                            </td>
+                            <td className="px-3 py-2 text-right tabular-nums text-zinc-800 dark:text-zinc-200">
+                              {nf.format(d.toplamTahakkuk)}
+                            </td>
+                            <td className="px-3 py-2 text-right tabular-nums text-zinc-800 dark:text-zinc-200">
+                              {nf0.format(d.yagmurKwh)}
+                            </td>
+                            <td className="px-3 py-2 text-right tabular-nums text-zinc-800 dark:text-zinc-200">
+                              {nf0.format(d.kanalizasyonKwh)}
+                            </td>
+                            <td className="px-3 py-2 text-right tabular-nums text-zinc-800 dark:text-zinc-200">
+                              {nf0.format(d.icmeKwh)}
+                            </td>
+                          </tr>
+                        ))
+                      )}
                     </tbody>
                   </table>
                 </div>
