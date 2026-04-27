@@ -493,11 +493,11 @@ function stripElektrikMahalleSuffix(s: string): string {
     .trim();
 }
 
-/** İlçe + mahalle için `byKonumAylik` anahtarı */
+/** İlçe + mahalle için `byKonumAylik` anahtarı (parse `mahalleKey` ile aynı) */
 export function elektrikKonumAnahtari(ilce: string, mahalle: string): string {
-  return `${elektrikAsciiFoldTr(elektrikNormKey(ilce))}|${elektrikAsciiFoldTr(
-    elektrikNormKey(stripElektrikMahalleSuffix(mahalle))
-  )}`;
+  const fold = (s: string) =>
+    elektrikAsciiFoldTr(elektrikNormKey(s)).replace(/ı/g, "i");
+  return `${fold(ilce)}|${fold(stripElektrikMahalleSuffix(mahalle))}`;
 }
 
 /** Elektrik satırı: seçilen dönem (yıllık / tek ay) için kWh ve tahakkuk */

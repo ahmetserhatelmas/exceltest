@@ -28,7 +28,13 @@ function num(v) {
   if (v === null || v === undefined || v === "") return null;
   if (typeof v === "number" && Number.isFinite(v)) return v;
   if (typeof v === "string") {
-    const t = v.trim();
+    let t = v
+      .trim()
+      .replace(/\u00a0/g, "")
+      .replace(/₺/g, "")
+      .replace(/€/g, "")
+      .replace(/\$/g, "")
+      .replace(/\s/g, "");
     if (!t || t === "-") return null;
     const n = Number(t.replace(/\./g, "").replace(",", "."));
     return Number.isFinite(n) ? n : null;
@@ -81,9 +87,8 @@ function stripMahalleSuffix(s) {
 }
 
 function mahalleKey(ilce, mahalle) {
-  return `${asciiFoldTr(normKey(ilce))}|${asciiFoldTr(
-    normKey(stripMahalleSuffix(mahalle))
-  )}`;
+  const fold = (s) => asciiFoldTr(normKey(s)).replace(/ı/g, "i");
+  return `${fold(ilce)}|${fold(stripMahalleSuffix(mahalle))}`;
 }
 
 const NUFUS_LOOKUP_ALIAS = {
@@ -251,6 +256,44 @@ function emptyAylik12() {
   return Array.from({ length: 12 }, () => ({ kwh: 0, tahakkuk: 0 }));
 }
 
+/**
+ * Elektrik sayfası başlık hücresi → sütun tanımı için tek tip anahtar.
+ * `ILÇE` (ASCII I) ile `İLÇE` (TR İ) aynı sütuna indirgenir; `ilçe` / `ılçe` ayrımı kalkar.
+ */
+function elektrikBaslikEslestir(h) {
+  return asciiFoldTr(normKey(textCell(h))).replace(/ı/g, "i");
+}
+
+/**
+ * İlk birkaç satırda gerçek tablo başlığını bulur (üstte boş/ara başlık satırı olan dosyalar).
+ */
+function findElektrikSheetLayout(rows) {
+  const maxScan = Math.min(12, rows.length);
+  for (let ri = 0; ri < maxScan; ri++) {
+    const cells = rows[ri] ?? [];
+    const keys = cells.map((c) => elektrikBaslikEslestir(c));
+    const mahalleIdx = keys.findIndex((k) => k === "mahalle");
+    let ilceIdx = keys.findIndex((k) => k === "ilce");
+    if (ilceIdx < 0) {
+      for (let j = 0; j < cells.length; j++) {
+        const up = textCell(cells[j]).toLocaleUpperCase("tr-TR");
+        const k = keys[j];
+        if (!k.includes("ilce")) continue;
+        if (up.includes("ENERJİ") || up.includes("ENERJI")) continue;
+        if (up.includes("ENERJİSA") || up.includes("ENERJISA")) continue;
+        /* "İlçe Kodu" → ilcekodu — adı değil, kod sütunu */
+        if (k.startsWith("ilcek") || k.includes("kodu")) continue;
+        ilceIdx = j;
+        break;
+      }
+    }
+    if (mahalleIdx >= 0 && ilceIdx >= 0) {
+      return { headerRowIdx: ri, mahalleIdx, ilceIdx };
+    }
+  }
+  return { headerRowIdx: 0, mahalleIdx: -1, ilceIdx: -1 };
+}
+
 function readElektrikSheetSummary(wb, sheetName, label, key) {
   const rows = readRows(wb, sheetName);
   if (rows.length < 2) {
@@ -266,20 +309,13 @@ function readElektrikSheetSummary(wb, sheetName, label, key) {
       byKonumAylik: {},
     };
   }
-  const headerCells = rows[0] ?? [];
+  const { headerRowIdx, mahalleIdx, ilceIdx } = findElektrikSheetLayout(rows);
+  const headerCells = rows[headerRowIdx] ?? [];
   const headers = headerCells.map((h) => normKey(h));
   const { hasAylik, aylikKwh, aylikTl } = findElektrikAySutunlari(headerCells);
 
   const kwhIdxLegacy = [];
   const tlIdxLegacy = [];
-  const mahalleIdx = headers.findIndex((h) => h === "mahalle");
-  let ilceIdx = headers.findIndex((h) => h === "ilçe");
-  if (ilceIdx < 0) {
-    ilceIdx = headers.findIndex((h) => {
-      if (!h.includes("ilçe")) return false;
-      return !h.includes("enerji");
-    });
-  }
   headers.forEach((h, i) => {
     if (h.includes("kwh")) kwhIdxLegacy.push(i);
     if (h.endsWith("tl")) tlIdxLegacy.push(i);
@@ -294,7 +330,7 @@ function readElektrikSheetSummary(wb, sheetName, label, key) {
   /** mahalleKey(ilce, mahalle) → aylık kWh/TL (3 sayfada MAHALLE + İLÇE) */
   const byKonumAylik = {};
 
-  for (let i = 1; i < rows.length; i++) {
+  for (let i = headerRowIdx + 1; i < rows.length; i++) {
     const r = rows[i];
     if (!r) continue;
     const ilceRaw =
