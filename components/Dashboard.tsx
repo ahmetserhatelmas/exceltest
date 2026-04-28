@@ -108,6 +108,8 @@ export default function Dashboard({ data }: Props) {
   /** -1 = Tümü (yıllık toplam), 0–11 = ay indeksi */
   const [monthIndex, setMonthIndex] = useState<number>(-1);
   const [muhtarAra, setMuhtarAra] = useState("");
+  /** Yakıt Özeti tablosu: yalnızca bu sekme; üstteki su/abone ilçe filtresinden bağımsız */
+  const [yakitIlceFiltre, setYakitIlceFiltre] = useState("");
   const [kaynakPanelOpen, setKaynakPanelOpen] = useState(true);
 
   const dataYear = data.dataYear ?? 2025;
@@ -445,6 +447,24 @@ export default function Dashboard({ data }: Props) {
     () => aggregateKanalHatVarYok(data.kanalHatVarYok ?? null, ilce, mahalle),
     [data.kanalHatVarYok, ilce, mahalle]
   );
+
+  const yakitIlceSecenekleri = useMemo(() => {
+    if (!data.yakit?.byIlce) return [];
+    return Object.keys(data.yakit.byIlce)
+      .filter((x) => x !== "TOPLAM")
+      .sort((a, b) => a.localeCompare(b, "tr-TR"));
+  }, [data.yakit?.byIlce]);
+
+  useEffect(() => {
+    if (!data.yakit?.byIlce || !yakitIlceFiltre) return;
+    const valid = Object.keys(data.yakit.byIlce).filter((k) => k !== "TOPLAM");
+    if (!valid.includes(yakitIlceFiltre)) setYakitIlceFiltre("");
+  }, [data.yakit?.byIlce, yakitIlceFiltre]);
+
+  const yakitOzetiGorunumu = useMemo(() => {
+    if (!data.yakit) return null;
+    return getYakitIlceView(data.yakit, yakitIlceFiltre);
+  }, [data.yakit, yakitIlceFiltre]);
 
   const aboneSekmesiBos =
     !hasDataForYear &&
@@ -1673,9 +1693,9 @@ export default function Dashboard({ data }: Props) {
                   <strong>Toplam yakıt</strong> = taşıt yakıtı + demirbaş (ör. jeneratör)
                   tahakkuku; kaynak Excel&apos;deki{" "}
                   <strong>İLÇELERE GÖRE YAKIT TAHAKKUKU</strong> özetine göre.{" "}
-                  <strong>MERKEZ</strong> diğer ilçelerle aynı şekilde satır ve üst ilçe
-                  filtresinde seçilir. Yıl, dosyadaki icmal yılıyla eşleşmeli (
-                  {data.yakit?.yakitYear ?? "—"}).
+                  <strong>MERKEZ</strong> diğer ilçelerle aynı şekilde listede yer alır.
+                  Tabloyu daraltmak için aşağıdaki ilçe filtresini kullanın. Yıl, dosyadaki
+                  icmal yılıyla eşleşmeli ({data.yakit?.yakitYear ?? "—"}).
                 </p>
                 {!data.yakit ? (
                   <p className="rounded-lg border border-dashed border-zinc-300 bg-zinc-50 px-4 py-8 text-center text-sm text-zinc-600 dark:border-zinc-600 dark:bg-zinc-900/40 dark:text-zinc-400">
@@ -1699,10 +1719,57 @@ export default function Dashboard({ data }: Props) {
                     olarak {data.yakit.yakitYear} seçin.
                   </p>
                 ) : (
-                  <YakitIlceTable
-                    yakit={data.yakit}
-                    ilceFilter={ilce}
-                  />
+                  <>
+                    {yakitOzetiGorunumu && (
+                      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+                        <MiniKpi
+                          label="Toplam taşıt"
+                          value={
+                            yakitOzetiGorunumu.bosSecim
+                              ? "—"
+                              : `${nf.format(yakitOzetiGorunumu.totals.tasit)} ₺`
+                          }
+                        />
+                        <MiniKpi
+                          label="Toplam demirbaş (diğer)"
+                          value={
+                            yakitOzetiGorunumu.bosSecim
+                              ? "—"
+                              : `${nf.format(yakitOzetiGorunumu.totals.demirbas)} ₺`
+                          }
+                        />
+                        <MiniKpi
+                          label="Toplam yakıt (özet)"
+                          value={
+                            yakitOzetiGorunumu.bosSecim
+                              ? "—"
+                              : `${nf.format(yakitOzetiGorunumu.totals.toplam)} ₺`
+                          }
+                        />
+                      </div>
+                    )}
+                    <label className="flex w-full max-w-xs flex-col gap-1 text-xs font-medium text-zinc-600 dark:text-zinc-400">
+                      İlçe filtresi
+                      <select
+                        className={selectCls}
+                        value={yakitIlceFiltre}
+                        onChange={(e) => setYakitIlceFiltre(e.target.value)}
+                      >
+                        <option value="">Tüm ilçeler</option>
+                        {yakitIlceSecenekleri.map((i) => (
+                          <option key={i} value={i}>
+                            {i}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    {yakitOzetiGorunumu && (
+                      <YakitIlceTable
+                        yakit={data.yakit}
+                        visibleKeys={yakitOzetiGorunumu.visibleKeys}
+                      />
+                    )}
+                  </>
                 )}
                 {data.yakit && (
                   <p className="text-xs text-zinc-400">
@@ -1720,87 +1787,111 @@ export default function Dashboard({ data }: Props) {
   );
 }
 
+/** İlçe filtresine göre görünen satırlar ve özet toplamlar (üstteki MiniKpi ile paylaşılır) */
+function getYakitIlceView(
+  yakit: NonNullable<DashboardPayload["yakit"]>,
+  ilceFilter: string
+) {
+  const ilceKeys = Object.keys(yakit.byIlce)
+    .filter((x) => x !== "TOPLAM")
+    .sort((a, b) => a.localeCompare(b, "tr-TR"));
+  const trimmed = ilceFilter.trim();
+  const visibleKeys = trimmed
+    ? ilceKeys.filter((k) => k === trimmed)
+    : ilceKeys;
+  let totals: { tasit: number; demirbas: number; toplam: number };
+  if (!trimmed) {
+    totals = {
+      tasit: yakit.toplamTasitTahakkuku,
+      demirbas: yakit.toplamDemirbasTahakkuku,
+      toplam: yakit.toplamYakitTahakkuku,
+    };
+  } else {
+    totals = visibleKeys.reduce(
+      (acc, k) => {
+        const row = yakit.byIlce[k];
+        if (!row) return acc;
+        return {
+          tasit: acc.tasit + row.tasitTahakkuku,
+          demirbas: acc.demirbas + row.demirbasTahakkuku,
+          toplam: acc.toplam + row.toplamYakitTahakkuku,
+        };
+      },
+      { tasit: 0, demirbas: 0, toplam: 0 }
+    );
+  }
+  const bosSecim = Boolean(trimmed && visibleKeys.length === 0);
+  return { visibleKeys, totals, bosSecim };
+}
+
 function YakitIlceTable({
   yakit,
-  ilceFilter,
+  visibleKeys,
 }: {
   yakit: NonNullable<DashboardPayload["yakit"]>;
-  ilceFilter: string;
+  visibleKeys: string[];
 }) {
   const nf = new Intl.NumberFormat("tr-TR", {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });
   return (
-                  <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
-                    <table className="w-full min-w-[720px] border-collapse text-left text-sm">
-                      <thead>
-                        <tr className="border-b border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900/80">
-                          <th className="px-3 py-2 font-semibold text-zinc-700 dark:text-zinc-300">
-                            İlçe
-                          </th>
-                          <th className="px-3 py-2 text-right font-semibold text-zinc-700 dark:text-zinc-300">
-                            Taşıt (TL)
-                          </th>
-                          <th className="px-3 py-2 text-right font-semibold text-zinc-700 dark:text-zinc-300">
-                            Demirbaş (TL)
-                          </th>
-                          <th className="px-3 py-2 text-right font-semibold text-zinc-700 dark:text-zinc-300">
-                            Toplam yakıt (TL)
-                          </th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {Object.keys(yakit.byIlce)
-                          .filter((x) => x !== "TOPLAM")
-                          .sort((a, b) => a.localeCompare(b, "tr-TR"))
-                          .map((ilceAd) => {
-                            const row = yakit.byIlce[ilceAd];
-                            if (!row) return null;
-                            const secili =
-                              ilceFilter.trim() &&
-                              ilceAd === ilceFilter.trim();
-                            return (
-                              <tr
-                                key={ilceAd}
-                                className={`border-b border-zinc-100 dark:border-zinc-800/80 ${
-                                  secili
-                                    ? "bg-sky-50 dark:bg-sky-950/40"
-                                    : ""
-                                }`}
-                              >
-                                <td className="px-3 py-2 font-medium text-zinc-900 dark:text-zinc-100">
-                                  {ilceAd}
-                                </td>
-                                <td className="px-3 py-2 text-right tabular-nums text-zinc-800 dark:text-zinc-200">
-                                  {nf.format(row.tasitTahakkuku)}
-                                </td>
-                                <td className="px-3 py-2 text-right tabular-nums text-zinc-800 dark:text-zinc-200">
-                                  {nf.format(row.demirbasTahakkuku)}
-                                </td>
-                                <td className="px-3 py-2 text-right tabular-nums text-zinc-800 dark:text-zinc-200">
-                                  {nf.format(row.toplamYakitTahakkuku)}
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        <tr className="border-t-2 border-zinc-300 bg-zinc-50 font-semibold dark:border-zinc-600 dark:bg-zinc-900/80">
-                          <td className="px-3 py-2 text-zinc-900 dark:text-zinc-100">
-                            TOPLAM
-                          </td>
-                          <td className="px-3 py-2 text-right tabular-nums text-zinc-900 dark:text-zinc-100">
-                            {nf.format(yakit.toplamTasitTahakkuku)}
-                          </td>
-                          <td className="px-3 py-2 text-right tabular-nums text-zinc-900 dark:text-zinc-100">
-                            {nf.format(yakit.toplamDemirbasTahakkuku)}
-                          </td>
-                          <td className="px-3 py-2 text-right tabular-nums text-zinc-900 dark:text-zinc-100">
-                            {nf.format(yakit.toplamYakitTahakkuku)}
-                          </td>
-                        </tr>
-                      </tbody>
-                    </table>
-                  </div>
+    <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
+      <table className="w-full min-w-[720px] border-collapse text-left text-sm">
+        <thead>
+          <tr className="border-b border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900/80">
+            <th className="px-3 py-2 font-semibold text-zinc-700 dark:text-zinc-300">
+              İlçe
+            </th>
+            <th className="px-3 py-2 text-right font-semibold text-zinc-700 dark:text-zinc-300">
+              Taşıt (TL)
+            </th>
+            <th className="px-3 py-2 text-right font-semibold text-zinc-700 dark:text-zinc-300">
+              Demirbaş (TL)
+            </th>
+            <th className="px-3 py-2 text-right font-semibold text-zinc-700 dark:text-zinc-300">
+              Toplam yakıt (TL)
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {visibleKeys.length === 0 ? (
+            <tr>
+              <td
+                colSpan={4}
+                className="px-3 py-6 text-center text-sm text-zinc-500 dark:text-zinc-400"
+              >
+                Seçilen ilçe için satır yok.
+              </td>
+            </tr>
+          ) : (
+            visibleKeys.map((ilceAd) => {
+              const row = yakit.byIlce[ilceAd];
+              if (!row) return null;
+              return (
+                <tr
+                  key={ilceAd}
+                  className="border-b border-zinc-100 dark:border-zinc-800/80"
+                >
+                  <td className="px-3 py-2 font-medium text-zinc-900 dark:text-zinc-100">
+                    {ilceAd}
+                  </td>
+                  <td className="px-3 py-2 text-right tabular-nums text-zinc-800 dark:text-zinc-200">
+                    {nf.format(row.tasitTahakkuku)}
+                  </td>
+                  <td className="px-3 py-2 text-right tabular-nums text-zinc-800 dark:text-zinc-200">
+                    {nf.format(row.demirbasTahakkuku)}
+                  </td>
+                  <td className="px-3 py-2 text-right tabular-nums text-zinc-800 dark:text-zinc-200">
+                    {nf.format(row.toplamYakitTahakkuku)}
+                  </td>
+                </tr>
+              );
+            })
+          )}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
