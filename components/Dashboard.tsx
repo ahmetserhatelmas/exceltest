@@ -272,8 +272,6 @@ export default function Dashboard({ data }: Props) {
         toplamKwh: null as number | null,
         toplamTahakkuk: null as number | null,
         toplamGider: null as number | null,
-        suTahakkuku: null as number | null,
-        yakitTahakkuku: null as number | null,
         netGelir: null as number | null,
         ilceTablo: [] as Array<{
           ilce: string;
@@ -371,8 +369,6 @@ export default function Dashboard({ data }: Props) {
       toplamKwh,
       toplamTahakkuk: toplamTah,
       toplamGider,
-      suTahakkuku: suTah,
-      yakitTahakkuku: yakitTah,
       netGelir,
       ilceTablo,
     };
@@ -1499,9 +1495,10 @@ export default function Dashboard({ data }: Props) {
                   tarafı içindir — elektrik sayfaları şimdilik yalnızca{" "}
                   <strong>{dataYear}</strong> dosyasındadır. Üç elektrik sayfasında{" "}
                   <strong>İLÇE</strong> ve <strong>MAHALLE</strong> sütunları vardır; üst
-                  filtrelerdeki ilçe/mahalle ile aynı konum satırları toplanır. Su tahakkuku
-                  ve net gelir (su tah. − <strong>toplam gider</strong>), aynı ay ve coğrafi
-                  filtredeki abone tahakkukunu kullanır.
+                  filtrelerdeki ilçe/mahalle ile aynı konum satırları toplanır. Üstteki{" "}
+                  <strong>Toplam tahakkuk</strong> ve <strong>Net gelir</strong> (su tah. −{" "}
+                  <strong>toplam gider</strong>) aynı ay ve coğrafi filtredeki abone
+                  tahakkukunu kullanır.
                   {!elektrikDonem?.yilOk && (
                     <span className="block pt-1 font-medium text-amber-700 dark:text-amber-400">
                       {selectedYear} plan yılı seçili: Excel&apos;e bu yıl için elektrik
@@ -1511,7 +1508,7 @@ export default function Dashboard({ data }: Props) {
                   )}
                 </p>
 
-                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+                <div className="grid grid-cols-2 gap-3">
                   <MiniKpi
                     label="Toplam Elektrik Tüketimi"
                     value={
@@ -1529,42 +1526,6 @@ export default function Dashboard({ data }: Props) {
                         ? `${nf.format(elektrikDonem.toplamTahakkuk)} ₺`
                         : elektrik
                           ? `${nf.format(elektrik.toplamElektrikTahakkuku)} ₺`
-                          : "—"
-                    }
-                  />
-                  <MiniKpi
-                    label="Toplam Su Tahakkuku"
-                    value={
-                      elektrikDonem?.suTahakkuku != null
-                        ? `${nf.format(elektrikDonem.suTahakkuku)} ₺`
-                        : elektrik
-                          ? `${nf.format(elektrik.toplamSuTahakkuku)} ₺`
-                          : "—"
-                    }
-                  />
-                  <MiniKpi
-                    label="Yakıt Tahakkuku"
-                    value={
-                      elektrikDonem?.yakitTahakkuku != null
-                        ? `${nf.format(elektrikDonem.yakitTahakkuku)} ₺`
-                        : data.yakit
-                          ? `${nf.format(
-                              yakitTahakkukuForPeriod(
-                                data.yakit,
-                                selectedYear,
-                                ilce
-                              )
-                            )} ₺`
-                          : "—"
-                    }
-                  />
-                  <MiniKpi
-                    label="Net Gelir"
-                    value={
-                      elektrikDonem?.netGelir != null
-                        ? `${nf.format(elektrikDonem.netGelir)} ₺`
-                        : elektrik
-                          ? `${nf.format(elektrik.netGelir)} ₺`
                           : "—"
                     }
                   />
