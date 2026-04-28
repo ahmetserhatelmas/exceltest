@@ -256,6 +256,96 @@ function emptyAylik12() {
   return Array.from({ length: 12 }, () => ({ kwh: 0, tahakkuk: 0 }));
 }
 
+/** Yakıt özet sayfası adı (İLÇELERE GÖRE YAKIT TAHAKKUKU vb.) */
+function yakitSheetEslestir(name) {
+  const k = asciiFoldTr(normKey(name)).replace(/ı/g, "i");
+  return (
+    k.includes("yakit") &&
+    (k.includes("tahakkuk") || k.includes("icmal") || k.includes("ilcelere"))
+  );
+}
+
+function findYakitSheet(sheetNames) {
+  const hit = sheetNames.find((n) => yakitSheetEslestir(n));
+  if (hit) return hit;
+  return sheetNames.find((n) => {
+    const k = asciiFoldTr(normKey(n)).replace(/ı/g, "i");
+    return k.includes("ilceleregore") && k.includes("yakit");
+  });
+}
+
+/**
+ * İlçelere göre taşıt + demirbaş yakıt tahakkuku (TL).
+ * Tipik düzen: satır 0’da yıl (A1), satır 2+ ilçe | taşıt | … | demirbaş.
+ */
+function readYakitIcmani(wb, sourceFileLabel) {
+  const sheetName = findYakitSheet(wb.SheetNames);
+  if (!sheetName) return null;
+  const rows = readRows(wb, sheetName);
+  if (rows.length < 4) return null;
+
+  let yakitYear = DATA_YEAR;
+  const r0 = rows[0] ?? [];
+  const y0 = r0[0];
+  if (typeof y0 === "number" && Number.isFinite(y0)) {
+    yakitYear = Math.floor(y0);
+  } else if (y0 != null && y0 !== "") {
+    const yn = Number(String(y0).trim().replace(/\s/g, ""));
+    if (Number.isFinite(yn)) yakitYear = Math.floor(yn);
+  }
+
+  const byIlce = {};
+  for (let i = 2; i < rows.length; i++) {
+    const r = rows[i];
+    if (!r) continue;
+    const ilce = textCell(r[0]).toLocaleUpperCase("tr-TR");
+    if (!ilce || ilce === "TOPLAM") continue;
+    const tasit = num(r[1]);
+    const demirbas = num(r[4] != null ? r[4] : r[3]);
+    const t = tasit ?? 0;
+    const d = demirbas ?? 0;
+    byIlce[ilce] = {
+      tasitTahakkuku: t,
+      demirbasTahakkuku: d,
+      toplamYakitTahakkuku: t + d,
+    };
+  }
+
+  let toplamTasitFromRow = null;
+  let toplamDemirbasFromRow = null;
+  for (let i = 2; i < rows.length; i++) {
+    const r = rows[i];
+    if (!r) continue;
+    const ilce = textCell(r[0]).toLocaleUpperCase("tr-TR");
+    if (ilce === "TOPLAM") {
+      toplamTasitFromRow = num(r[1]);
+      toplamDemirbasFromRow = num(r[4] != null ? r[4] : r[3]);
+      break;
+    }
+  }
+
+  let toplamTasit = 0;
+  let toplamDemirbas = 0;
+  for (const v of Object.values(byIlce)) {
+    toplamTasit += v.tasitTahakkuku;
+    toplamDemirbas += v.demirbasTahakkuku;
+  }
+  if (toplamTasitFromRow != null) toplamTasit = toplamTasitFromRow;
+  if (toplamDemirbasFromRow != null) toplamDemirbas = toplamDemirbasFromRow;
+
+  const toplamYakitTahakkuku = toplamTasit + toplamDemirbas;
+
+  return {
+    sourceFile: sourceFileLabel,
+    sheet: sheetName,
+    yakitYear,
+    toplamTasitTahakkuku: toplamTasit,
+    toplamDemirbasTahakkuku: toplamDemirbas,
+    toplamYakitTahakkuku,
+    byIlce,
+  };
+}
+
 /**
  * Elektrik sayfası başlık hücresi → sütun tanımı için tek tip anahtar.
  * `ILÇE` (ASCII I) ile `İLÇE` (TR İ) aynı sütuna indirgenir; `ilçe` / `ılçe` ayrımı kalkar.
@@ -629,6 +719,27 @@ function main() {
   }
 
   const wb = XLSX.readFile(xlsxPath, { cellDates: true });
+
+  let yakitPayload = null;
+  const yakitCandidates = [
+    process.env.YAKIT_ICMALI_PATH,
+    path.join(root, "data", "2025 YAKIT İCMALİ 1.xlsx"),
+    path.join(root, "data", "yakit-icmali.xlsx"),
+  ].filter(Boolean);
+  for (const p of yakitCandidates) {
+    if (!p || !fs.existsSync(p)) continue;
+    try {
+      const ywb = XLSX.readFile(p, { cellDates: true });
+      yakitPayload = readYakitIcmani(ywb, path.basename(p));
+      if (yakitPayload) break;
+    } catch {
+      /* ignore */
+    }
+  }
+  if (!yakitPayload) {
+    yakitPayload = readYakitIcmani(wb, path.basename(xlsxPath));
+  }
+
   const { map: nufusMap, toplam: nufusToplam, byIlce: nufusIlceToplam } =
     readNufus(wb);
   const altyapiMap = readAltyapiMap(wb);
@@ -736,10 +847,14 @@ function main() {
       toplamElektrikTuketimiKwh: toplamElektrikKwh,
       toplamElektrikTahakkuku: toplamElektrikTahakkuk,
       toplamSuTahakkuku: toplamSuTahakkuk,
-      netGelir: toplamSuTahakkuk - toplamElektrikTahakkuk,
+      netGelir:
+        toplamSuTahakkuk -
+        toplamElektrikTahakkuk -
+        (yakitPayload?.toplamYakitTahakkuku ?? 0),
       detay: elektrikDetay,
       ilceDetay: elektrikIlceDetay,
     },
+    ...(yakitPayload ? { yakit: yakitPayload } : {}),
     hatUzunluklari,
     kanalHatVarYok,
   };

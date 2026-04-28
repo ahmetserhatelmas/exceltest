@@ -39,6 +39,7 @@ import {
   elektrikDetayIlceDonem,
   elektrikDetayKonumDonem,
   filterRecords,
+  yakitTahakkukuForPeriod,
   hatHucreTumYillarOzeti,
   hatHucreYilOzeti,
   recordTahakkukDönem,
@@ -79,7 +80,14 @@ function legendFormatter(value: string) {
   return <span style={{ color: "var(--chart-tick)" }}>{value}</span>;
 }
 
-type SectionId = "ozet" | "muhtar" | "altyapi" | "hatlar" | "ilce" | "elektrik";
+type SectionId =
+  | "ozet"
+  | "muhtar"
+  | "altyapi"
+  | "hatlar"
+  | "ilce"
+  | "elektrik"
+  | "yakit";
 
 const NAV_SECTIONS: { id: SectionId; label: string }[] = [
   { id: "ozet", label: "Özet" },
@@ -88,6 +96,7 @@ const NAV_SECTIONS: { id: SectionId; label: string }[] = [
   { id: "hatlar", label: "Altyapı Hatları" },
   { id: "ilce", label: "İlçe Bazlı Okuma" },
   { id: "elektrik", label: "Elektrik Özeti" },
+  { id: "yakit", label: "Yakıt Özeti" },
 ];
 
 type Props = { data: DashboardPayload };
@@ -260,7 +269,9 @@ export default function Dashboard({ data }: Props) {
         detayTablo: detayBos,
         toplamKwh: null as number | null,
         toplamTahakkuk: null as number | null,
+        toplamGider: null as number | null,
         suTahakkuku: null as number | null,
+        yakitTahakkuku: null as number | null,
         netGelir: null as number | null,
         ilceTablo: [] as Array<{
           ilce: string;
@@ -301,7 +312,9 @@ export default function Dashboard({ data }: Props) {
     const toplamKwh = detayTablo.reduce((s, r) => s + r.kwh, 0);
     const toplamTah = detayTablo.reduce((s, r) => s + r.tahakkuk, 0);
     const suTah = kpi.totalTahakkuk;
-    const netGelir = suTah - toplamTah;
+    const yakitTah = yakitTahakkukuForPeriod(data.yakit, selectedYear, ilce);
+    const toplamGider = toplamTah + yakitTah;
+    const netGelir = suTah - toplamGider;
 
     const ilceListe = ilce.trim()
       ? [ilce]
@@ -355,12 +368,15 @@ export default function Dashboard({ data }: Props) {
       detayTablo,
       toplamKwh,
       toplamTahakkuk: toplamTah,
+      toplamGider,
       suTahakkuku: suTah,
+      yakitTahakkuku: yakitTah,
       netGelir,
       ilceTablo,
     };
   }, [
     data.elektrik,
+    data.yakit,
     data.ilceler,
     dataYear,
     selectedYear,
@@ -590,24 +606,31 @@ export default function Dashboard({ data }: Props) {
               value={kpi.m3PerAbone != null ? nf.format(kpi.m3PerAbone) : "—"}
             />
             <KpiCard
-              title="Toplam elektrik tah."
+              title="Toplam gider"
               subtitle={
                 elektrikDonem?.yilOk
-                  ? `${isYearly ? "yıllık" : selectedMonthLabel}${ilce ? ` · ${ilce}` : ""}`
-                  : `${selectedYear} plan · elektrik henüz yok`
+                  ? `elektrik + yakıt tah. · ${isYearly ? "yıllık" : selectedMonthLabel}${ilce ? ` · ${ilce}` : ""}`
+                  : `${selectedYear} plan · henüz tam veri yok`
               }
               value={
-                elektrikDonem?.toplamTahakkuk != null
-                  ? `${nf.format(elektrikDonem.toplamTahakkuk)} ₺`
-                  : elektrik
-                    ? `${nf.format(elektrik.toplamElektrikTahakkuku)} ₺`
-                    : "—"
+                elektrikDonem?.toplamGider != null
+                  ? `${nf.format(elektrikDonem.toplamGider)} ₺`
+                  : (() => {
+                      const eTah = data.elektrik?.toplamElektrikTahakkuku ?? 0;
+                      const yTah = yakitTahakkukuForPeriod(
+                        data.yakit,
+                        selectedYear,
+                        ilce
+                      );
+                      if (!data.elektrik && !data.yakit) return "—";
+                      return `${nf.format(eTah + yTah)} ₺`;
+                    })()
               }
               valueCompact
             />
             <KpiCard
               title="Net gelir"
-              subtitle="su tah. − elektrik tah. (üst filtreler)"
+              subtitle="su tah. − toplam gider (üst filtreler)"
               value={
                 elektrikDonem?.netGelir != null
                   ? `${nf.format(elektrikDonem.netGelir)} ₺`
@@ -1457,7 +1480,8 @@ export default function Dashboard({ data }: Props) {
                   <strong>{dataYear}</strong> dosyasındadır. Üç elektrik sayfasında{" "}
                   <strong>İLÇE</strong> ve <strong>MAHALLE</strong> sütunları vardır; üst
                   filtrelerdeki ilçe/mahalle ile aynı konum satırları toplanır. Su tahakkuku
-                  ve net gelir, aynı ay ve coğrafi filtredeki abone tahakkukunu kullanır.
+                  ve net gelir (su tah. − <strong>toplam gider</strong>), aynı ay ve coğrafi
+                  filtredeki abone tahakkukunu kullanır.
                   {!elektrikDonem?.yilOk && (
                     <span className="block pt-1 font-medium text-amber-700 dark:text-amber-400">
                       {selectedYear} plan yılı seçili: Excel&apos;e bu yıl için elektrik
@@ -1467,7 +1491,7 @@ export default function Dashboard({ data }: Props) {
                   )}
                 </p>
 
-                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
                   <MiniKpi
                     label="Toplam Elektrik Tüketimi"
                     value={
@@ -1495,6 +1519,22 @@ export default function Dashboard({ data }: Props) {
                         ? `${nf.format(elektrikDonem.suTahakkuku)} ₺`
                         : elektrik
                           ? `${nf.format(elektrik.toplamSuTahakkuku)} ₺`
+                          : "—"
+                    }
+                  />
+                  <MiniKpi
+                    label="Yakıt Tahakkuku"
+                    value={
+                      elektrikDonem?.yakitTahakkuku != null
+                        ? `${nf.format(elektrikDonem.yakitTahakkuku)} ₺`
+                        : data.yakit
+                          ? `${nf.format(
+                              yakitTahakkukuForPeriod(
+                                data.yakit,
+                                selectedYear,
+                                ilce
+                              )
+                            )} ₺`
                           : "—"
                     }
                   />
@@ -1626,12 +1666,141 @@ export default function Dashboard({ data }: Props) {
                 </div>
               </div>
             )}
+
+            {activeSection === "yakit" && (
+              <div className="flex flex-col gap-4">
+                <p className="text-xs text-zinc-500 dark:text-zinc-500">
+                  <strong>Toplam yakıt</strong> = taşıt yakıtı + demirbaş (ör. jeneratör)
+                  tahakkuku; kaynak Excel&apos;deki{" "}
+                  <strong>İLÇELERE GÖRE YAKIT TAHAKKUKU</strong> özetine göre.{" "}
+                  <strong>MERKEZ</strong> diğer ilçelerle aynı şekilde satır ve üst ilçe
+                  filtresinde seçilir. Yıl, dosyadaki icmal yılıyla eşleşmeli (
+                  {data.yakit?.yakitYear ?? "—"}).
+                </p>
+                {!data.yakit ? (
+                  <p className="rounded-lg border border-dashed border-zinc-300 bg-zinc-50 px-4 py-8 text-center text-sm text-zinc-600 dark:border-zinc-600 dark:bg-zinc-900/40 dark:text-zinc-400">
+                    Yakıt icmalı bulunamadı.{" "}
+                    <code className="rounded bg-zinc-200 px-1 dark:bg-zinc-800">
+                      data/2025 YAKIT İCMALİ 1.xlsx
+                    </code>{" "}
+                    dosyasını ekleyip{" "}
+                    <code className="rounded bg-zinc-200 px-1 dark:bg-zinc-800">
+                      npm run data
+                    </code>{" "}
+                    çalıştırın veya{" "}
+                    <code className="rounded bg-zinc-200 px-1 dark:bg-zinc-800">
+                      YAKIT_ICMALI_PATH
+                    </code>{" "}
+                    ile yolu verin.
+                  </p>
+                ) : selectedYear !== data.yakit.yakitYear ? (
+                  <p className="text-sm font-medium text-amber-800 dark:text-amber-300">
+                    Yakıt verisi {data.yakit.yakitYear} yılı içindir. Üstte veri yılı
+                    olarak {data.yakit.yakitYear} seçin.
+                  </p>
+                ) : (
+                  <YakitIlceTable
+                    yakit={data.yakit}
+                    ilceFilter={ilce}
+                  />
+                )}
+                {data.yakit && (
+                  <p className="text-xs text-zinc-400">
+                    Dosya: {data.yakit.sourceFile} · Sayfa: {data.yakit.sheet}
+                  </p>
+                )}
+              </div>
+            )}
             </>
             )}
           </div>
         </div>
       </div>
     </div>
+  );
+}
+
+function YakitIlceTable({
+  yakit,
+  ilceFilter,
+}: {
+  yakit: NonNullable<DashboardPayload["yakit"]>;
+  ilceFilter: string;
+}) {
+  const nf = new Intl.NumberFormat("tr-TR", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+  return (
+                  <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
+                    <table className="w-full min-w-[720px] border-collapse text-left text-sm">
+                      <thead>
+                        <tr className="border-b border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900/80">
+                          <th className="px-3 py-2 font-semibold text-zinc-700 dark:text-zinc-300">
+                            İlçe
+                          </th>
+                          <th className="px-3 py-2 text-right font-semibold text-zinc-700 dark:text-zinc-300">
+                            Taşıt (TL)
+                          </th>
+                          <th className="px-3 py-2 text-right font-semibold text-zinc-700 dark:text-zinc-300">
+                            Demirbaş (TL)
+                          </th>
+                          <th className="px-3 py-2 text-right font-semibold text-zinc-700 dark:text-zinc-300">
+                            Toplam yakıt (TL)
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {Object.keys(yakit.byIlce)
+                          .filter((x) => x !== "TOPLAM")
+                          .sort((a, b) => a.localeCompare(b, "tr-TR"))
+                          .map((ilceAd) => {
+                            const row = yakit.byIlce[ilceAd];
+                            if (!row) return null;
+                            const secili =
+                              ilceFilter.trim() &&
+                              ilceAd === ilceFilter.trim();
+                            return (
+                              <tr
+                                key={ilceAd}
+                                className={`border-b border-zinc-100 dark:border-zinc-800/80 ${
+                                  secili
+                                    ? "bg-sky-50 dark:bg-sky-950/40"
+                                    : ""
+                                }`}
+                              >
+                                <td className="px-3 py-2 font-medium text-zinc-900 dark:text-zinc-100">
+                                  {ilceAd}
+                                </td>
+                                <td className="px-3 py-2 text-right tabular-nums text-zinc-800 dark:text-zinc-200">
+                                  {nf.format(row.tasitTahakkuku)}
+                                </td>
+                                <td className="px-3 py-2 text-right tabular-nums text-zinc-800 dark:text-zinc-200">
+                                  {nf.format(row.demirbasTahakkuku)}
+                                </td>
+                                <td className="px-3 py-2 text-right tabular-nums text-zinc-800 dark:text-zinc-200">
+                                  {nf.format(row.toplamYakitTahakkuku)}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        <tr className="border-t-2 border-zinc-300 bg-zinc-50 font-semibold dark:border-zinc-600 dark:bg-zinc-900/80">
+                          <td className="px-3 py-2 text-zinc-900 dark:text-zinc-100">
+                            TOPLAM
+                          </td>
+                          <td className="px-3 py-2 text-right tabular-nums text-zinc-900 dark:text-zinc-100">
+                            {nf.format(yakit.toplamTasitTahakkuku)}
+                          </td>
+                          <td className="px-3 py-2 text-right tabular-nums text-zinc-900 dark:text-zinc-100">
+                            {nf.format(yakit.toplamDemirbasTahakkuku)}
+                          </td>
+                          <td className="px-3 py-2 text-right tabular-nums text-zinc-900 dark:text-zinc-100">
+                            {nf.format(yakit.toplamYakitTahakkuku)}
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
   );
 }
 

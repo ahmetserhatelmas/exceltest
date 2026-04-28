@@ -93,10 +93,28 @@ export type DashboardPayload = {
   ilceler: string[];
   mahalleler: Record<string, string[]>;
   records: DashboardRecord[];
+  /** Yakıt icmali (Taşıt + Demirbaş); ayrı Excel dosyasından veya gömülü sayfadan */
+  yakit?: {
+    sourceFile: string;
+    sheet: string;
+    yakitYear: number;
+    toplamTasitTahakkuku: number;
+    toplamDemirbasTahakkuku: number;
+    toplamYakitTahakkuku: number;
+    byIlce: Record<
+      string,
+      {
+        tasitTahakkuku: number;
+        demirbasTahakkuku: number;
+        toplamYakitTahakkuku: number;
+      }
+    >;
+  };
   elektrik?: {
     toplamElektrikTuketimiKwh: number;
     toplamElektrikTahakkuku: number;
     toplamSuTahakkuku: number;
+    /** Su tahakkuku − toplam gider (gider = elektrik + yakıt; yakıt yoksa yalnız elektrik) */
     netGelir: number;
     detay: ElektrikDetaySatiri[];
     ilceDetay?: Array<{
@@ -494,6 +512,18 @@ function stripElektrikMahalleSuffix(s: string): string {
 }
 
 /** İlçe + mahalle için `byKonumAylik` anahtarı (parse `mahalleKey` ile aynı) */
+/** Seçilen yıl + ilçe filtresine göre yakıt TL (mahalle yok; ilçe MERKEZ dahil Excel satırıyla eşleşir) */
+export function yakitTahakkukuForPeriod(
+  yakit: DashboardPayload["yakit"] | undefined,
+  selectedYear: number,
+  ilceFilter: string
+): number {
+  if (!yakit || selectedYear !== yakit.yakitYear) return 0;
+  const t = ilceFilter.trim();
+  if (t) return yakit.byIlce[t]?.toplamYakitTahakkuku ?? 0;
+  return yakit.toplamYakitTahakkuku;
+}
+
 export function elektrikKonumAnahtari(ilce: string, mahalle: string): string {
   const fold = (s: string) =>
     elektrikAsciiFoldTr(elektrikNormKey(s)).replace(/ı/g, "i");
