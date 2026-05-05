@@ -159,6 +159,50 @@ export type DashboardPayload = {
     sheetLabel: string;
     satirlar: KanalHatVarYokSatiri[];
   };
+  /** Mesai toplam verisi (İLÇELERE GÖRE-MESAİ TOPLAM Excel'i) */
+  mesai?: MesaiPayload;
+};
+
+export type MesaiIlceSatiri = {
+  ilce: string;
+  fazlaMesaiSaat: number;
+  fazlaMesaiTutar: number;
+  cumartesiGun: number;
+  cumartesiTutar: number;
+  haftaTatiliGun: number;
+  haftaTatiliTutar: number;
+  bayramGun: number;
+  bayramTutar: number;
+  genelToplamTutar: number;
+  personelSayisi: number;
+};
+
+export type MesaiAylik = {
+  ay: number;
+  ayAd: string;
+  genelToplamTutar: number;
+  personelSayisi: number;
+  ilceler: MesaiIlceSatiri[];
+};
+
+export type MesaiSubeSatiri = {
+  sube: string;
+  ilce: string;
+  daire: string;
+  tutar: number;
+  personelSayisi: number;
+};
+
+export type MesaiPayload = {
+  sourceFile: string;
+  dataYear: number;
+  ozet: {
+    toplamTutar: number;
+    toplamAyPersonelSayisi: number;
+    kisiBasiOrtalamaTutar: number | null;
+  };
+  top10Sube: MesaiSubeSatiri[];
+  aylik: MesaiAylik[];
 };
 
 export type KanalHatVarYokDurum = "var" | "yok" | "kismi" | "diger";

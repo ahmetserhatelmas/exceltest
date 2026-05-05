@@ -16,6 +16,9 @@ import type {
   HatUzunlukHucre,
   IlcePerformansSatiri,
   IlcePerformansToplam,
+  MesaiAylik,
+  MesaiIlceSatiri,
+  MesaiSubeSatiri,
 } from "@/lib/dashboard";
 
 /** Hat tablosu: tüm yılların işletme+yatırım eklemesi (Excel satır toplamı) */
@@ -87,7 +90,8 @@ type SectionId =
   | "hatlar"
   | "ilce"
   | "elektrik"
-  | "yakit";
+  | "yakit"
+  | "mesai";
 
 const NAV_SECTIONS: { id: SectionId; label: string }[] = [
   { id: "ozet", label: "Özet" },
@@ -97,6 +101,7 @@ const NAV_SECTIONS: { id: SectionId; label: string }[] = [
   { id: "ilce", label: "İlçe Bazlı Okuma" },
   { id: "elektrik", label: "Elektrik Özeti" },
   { id: "yakit", label: "Yakıt Özeti" },
+  { id: "mesai", label: "Mesai Özeti" },
 ];
 
 type Props = { data: DashboardPayload };
@@ -1739,6 +1744,10 @@ export default function Dashboard({ data }: Props) {
                 )}
               </div>
             )}
+
+            {activeSection === "mesai" && (
+              <MesaiSection mesai={data.mesai} />
+            )}
             </>
             )}
           </div>
@@ -1850,6 +1859,320 @@ function YakitIlceTable({
               );
             })
           )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/* ─── MESAİ BİLEŞENLERİ ─── */
+
+function MesaiSection({ mesai }: { mesai: DashboardPayload["mesai"] }) {
+  const nf0 = new Intl.NumberFormat("tr-TR", { maximumFractionDigits: 0 });
+  const nf2 = new Intl.NumberFormat("tr-TR", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+  const [seciliAy, setSeciliAy] = useState<number>(-1); // -1 = tümü
+  const [seciliIlce, setSeciliIlce] = useState("");
+
+  if (!mesai) {
+    return (
+      <p className="rounded-lg border border-dashed border-zinc-300 bg-zinc-50 px-4 py-8 text-center text-sm text-zinc-600 dark:border-zinc-600 dark:bg-zinc-900/40 dark:text-zinc-400">
+        Mesai verisi bulunamadı.{" "}
+        <code className="rounded bg-zinc-200 px-1 dark:bg-zinc-800">
+          data/mesai-2025.xlsx
+        </code>{" "}
+        dosyasını ekleyip{" "}
+        <code className="rounded bg-zinc-200 px-1 dark:bg-zinc-800">npm run data</code>{" "}
+        çalıştırın.
+      </p>
+    );
+  }
+
+  // Aya göre filtreli veri
+  const filtreliAylik = useMemo(
+    () => (seciliAy === -1 ? mesai.aylik : mesai.aylik.filter((a) => a.ay === seciliAy)),
+    [mesai.aylik, seciliAy]
+  );
+
+  // İlçe bazlı toplam (filtrelenmiş aylara göre)
+  const ilceToplam = useMemo(() => {
+    const acc = new Map<string, MesaiIlceSatiri & { ayCount: number }>();
+    for (const ay of filtreliAylik) {
+      for (const s of ay.ilceler) {
+        if (seciliIlce && s.ilce !== seciliIlce) continue;
+        if (!acc.has(s.ilce)) {
+          acc.set(s.ilce, { ...s, ayCount: 0 });
+        } else {
+          const e = acc.get(s.ilce)!;
+          e.fazlaMesaiSaat += s.fazlaMesaiSaat;
+          e.fazlaMesaiTutar += s.fazlaMesaiTutar;
+          e.cumartesiGun += s.cumartesiGun;
+          e.cumartesiTutar += s.cumartesiTutar;
+          e.haftaTatiliGun += s.haftaTatiliGun;
+          e.haftaTatiliTutar += s.haftaTatiliTutar;
+          e.bayramGun += s.bayramGun;
+          e.bayramTutar += s.bayramTutar;
+          e.genelToplamTutar += s.genelToplamTutar;
+          e.personelSayisi += s.personelSayisi;
+        }
+        acc.get(s.ilce)!.ayCount += 1;
+      }
+    }
+    return [...acc.values()].sort((a, b) => b.genelToplamTutar - a.genelToplamTutar);
+  }, [filtreliAylik, seciliIlce]);
+
+  // Aylık bar chart verisi
+  const ayBarData = useMemo(
+    () =>
+      mesai.aylik.map((a) => {
+        const filtered = seciliIlce
+          ? a.ilceler.filter((i) => i.ilce === seciliIlce)
+          : a.ilceler;
+        return {
+          ay: a.ayAd,
+          tutar: filtered.reduce((s, i) => s + i.genelToplamTutar, 0),
+          personel: filtered.reduce((s, i) => s + i.personelSayisi, 0),
+        };
+      }),
+    [mesai.aylik, seciliIlce]
+  );
+
+  // KPI hesaplama
+  const toplamTutar = ilceToplam.reduce((s, r) => s + r.genelToplamTutar, 0);
+  const toplamPersonel = filtreliAylik.reduce((s, a) => s + a.personelSayisi, 0);
+  const kisiBasiTutar = toplamPersonel > 0 ? toplamTutar / toplamPersonel : null;
+
+  // İlçe seçenekleri
+  const ilceSecenekleri = useMemo(
+    () =>
+      [...new Set(mesai.aylik.flatMap((a) => a.ilceler.map((i) => i.ilce)))].sort((a, b) =>
+        a.localeCompare(b, "tr-TR")
+      ),
+    [mesai.aylik]
+  );
+
+  const selectCls =
+    "rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100";
+
+  return (
+    <div className="flex flex-col gap-6">
+      {/* Filtreler */}
+      <div className="flex flex-wrap gap-3">
+        <label className="flex flex-col gap-1 text-xs font-medium text-zinc-600 dark:text-zinc-400">
+          Ay
+          <select
+            className={selectCls}
+            value={seciliAy}
+            onChange={(e) => setSeciliAy(Number(e.target.value))}
+          >
+            <option value={-1}>Tüm aylar</option>
+            {mesai.aylik.map((a) => (
+              <option key={a.ay} value={a.ay}>
+                {a.ayAd}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="flex flex-col gap-1 text-xs font-medium text-zinc-600 dark:text-zinc-400">
+          İlçe
+          <select
+            className={selectCls}
+            value={seciliIlce}
+            onChange={(e) => setSeciliIlce(e.target.value)}
+          >
+            <option value="">Tüm ilçeler</option>
+            {ilceSecenekleri.map((i) => (
+              <option key={i} value={i}>
+                {i}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+
+      {/* KPI Kartları */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+        <MiniKpi
+          label="Toplam mesai tutarı"
+          value={`${nf0.format(toplamTutar)} ₺`}
+        />
+        <MiniKpi
+          label="Mesaili personel-ay sayısı"
+          value={nf0.format(toplamPersonel)}
+        />
+        <MiniKpi
+          label="Kişi başı ort. mesai tutarı"
+          value={kisiBasiTutar != null ? `${nf2.format(kisiBasiTutar)} ₺` : "—"}
+        />
+        <MiniKpi
+          label="Toplam mesai / kişi tutarı"
+          value={kisiBasiTutar != null ? `${nf2.format(kisiBasiTutar)} ₺` : "—"}
+        />
+      </div>
+
+      {/* Aylık Bar Grafiği */}
+      <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
+        <h2 className="mb-4 text-base font-semibold text-zinc-900 dark:text-zinc-100">
+          Aylık Toplam Mesai Tutarı
+        </h2>
+        <ResponsiveContainer width="100%" height={240}>
+          <BarChart data={ayBarData} margin={chartMargin}>
+            <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" />
+            <XAxis
+              dataKey="ay"
+              tick={{ fill: "var(--chart-tick)", fontSize: 11 }}
+              axisLine={false}
+              tickLine={false}
+            />
+            <YAxis
+              tickFormatter={formatYAxisTl}
+              tick={{ fill: "var(--chart-tick)", fontSize: 11 }}
+              axisLine={false}
+              tickLine={false}
+              width={yAxisWidth}
+            />
+            <Tooltip
+              formatter={(v: unknown) =>
+                typeof v === "number"
+                  ? [`${nf0.format(v)} ₺`, "Mesai Tutarı"]
+                  : [String(v), ""]
+              }
+              contentStyle={{
+                background: "var(--tooltip-bg)",
+                border: "1px solid var(--tooltip-border)",
+                borderRadius: 8,
+                fontSize: 13,
+              }}
+            />
+            <Bar dataKey="tutar" name="Mesai Tutarı" fill="#6366f1" radius={[4, 4, 0, 0]} />
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+
+      {/* İlçe Tablosu */}
+      <div className="rounded-xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
+        <h2 className="px-4 pt-4 pb-3 text-base font-semibold text-zinc-900 dark:text-zinc-100">
+          İlçe Bazlı Mesai Özeti
+        </h2>
+        <MesaiIlceTable rows={ilceToplam} />
+      </div>
+
+      {/* Top 10 Şube */}
+      {mesai.top10Sube.length > 0 && (
+        <div className="rounded-xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
+          <h2 className="px-4 pt-4 pb-3 text-base font-semibold text-zinc-900 dark:text-zinc-100">
+            En Yüksek Mesai Yapan 10 Şube
+          </h2>
+          <MesaiTop10Sube rows={mesai.top10Sube} />
+        </div>
+      )}
+
+      <p className="text-xs text-zinc-400">
+        Dosya: {mesai.sourceFile} · Yıl: {mesai.dataYear}
+      </p>
+    </div>
+  );
+}
+
+function MesaiIlceTable({ rows }: { rows: (MesaiIlceSatiri & { ayCount?: number })[] }) {
+  const nf0 = new Intl.NumberFormat("tr-TR", { maximumFractionDigits: 0 });
+  const nf1 = new Intl.NumberFormat("tr-TR", { maximumFractionDigits: 1, minimumFractionDigits: 1 });
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full min-w-[800px] border-collapse text-left text-sm">
+        <thead>
+          <tr className="border-b border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900/80">
+            <th className="px-3 py-2 font-semibold text-zinc-700 dark:text-zinc-300">İlçe</th>
+            <th className="px-3 py-2 text-right font-semibold text-zinc-700 dark:text-zinc-300">Personel Sayısı</th>
+            <th className="px-3 py-2 text-right font-semibold text-zinc-700 dark:text-zinc-300">Fazla Mesai (Saat)</th>
+            <th className="px-3 py-2 text-right font-semibold text-zinc-700 dark:text-zinc-300">Cumartesi (Gün)</th>
+            <th className="px-3 py-2 text-right font-semibold text-zinc-700 dark:text-zinc-300">Hafta Tatili (Gün)</th>
+            <th className="px-3 py-2 text-right font-semibold text-zinc-700 dark:text-zinc-300">Bayram (Gün)</th>
+            <th className="px-3 py-2 text-right font-semibold text-zinc-700 dark:text-zinc-300">Genel Toplam (₺)</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.length === 0 ? (
+            <tr>
+              <td colSpan={7} className="px-3 py-6 text-center text-sm text-zinc-500 dark:text-zinc-400">
+                Veri yok.
+              </td>
+            </tr>
+          ) : (
+            rows.map((r) => (
+              <tr key={r.ilce} className="border-b border-zinc-100 hover:bg-zinc-50/80 dark:border-zinc-800/80 dark:hover:bg-zinc-900/50">
+                <td className="px-3 py-2 font-medium text-zinc-900 dark:text-zinc-100">{r.ilce}</td>
+                <td className="px-3 py-2 text-right tabular-nums text-zinc-800 dark:text-zinc-200">{nf0.format(r.personelSayisi)}</td>
+                <td className="px-3 py-2 text-right tabular-nums text-zinc-800 dark:text-zinc-200">{nf1.format(r.fazlaMesaiSaat)}</td>
+                <td className="px-3 py-2 text-right tabular-nums text-zinc-800 dark:text-zinc-200">{nf1.format(r.cumartesiGun)}</td>
+                <td className="px-3 py-2 text-right tabular-nums text-zinc-800 dark:text-zinc-200">{nf1.format(r.haftaTatiliGun)}</td>
+                <td className="px-3 py-2 text-right tabular-nums text-zinc-800 dark:text-zinc-200">{nf1.format(r.bayramGun)}</td>
+                <td className="px-3 py-2 text-right tabular-nums font-semibold text-zinc-900 dark:text-zinc-100">{nf0.format(r.genelToplamTutar)} ₺</td>
+              </tr>
+            ))
+          )}
+        </tbody>
+        {rows.length > 0 && (
+          <tfoot>
+            <tr className="border-t-2 border-zinc-300 bg-zinc-100 font-semibold dark:border-zinc-700 dark:bg-zinc-900">
+              <td className="px-3 py-2 text-zinc-900 dark:text-zinc-100">TOPLAM</td>
+              <td className="px-3 py-2 text-right tabular-nums text-zinc-900 dark:text-zinc-100">
+                {nf0.format(rows.reduce((s, r) => s + r.personelSayisi, 0))}
+              </td>
+              <td className="px-3 py-2 text-right tabular-nums text-zinc-900 dark:text-zinc-100">
+                {nf1.format(rows.reduce((s, r) => s + r.fazlaMesaiSaat, 0))}
+              </td>
+              <td className="px-3 py-2 text-right tabular-nums text-zinc-900 dark:text-zinc-100">
+                {nf1.format(rows.reduce((s, r) => s + r.cumartesiGun, 0))}
+              </td>
+              <td className="px-3 py-2 text-right tabular-nums text-zinc-900 dark:text-zinc-100">
+                {nf1.format(rows.reduce((s, r) => s + r.haftaTatiliGun, 0))}
+              </td>
+              <td className="px-3 py-2 text-right tabular-nums text-zinc-900 dark:text-zinc-100">
+                {nf1.format(rows.reduce((s, r) => s + r.bayramGun, 0))}
+              </td>
+              <td className="px-3 py-2 text-right tabular-nums font-semibold text-zinc-900 dark:text-zinc-100">
+                {nf0.format(rows.reduce((s, r) => s + r.genelToplamTutar, 0))} ₺
+              </td>
+            </tr>
+          </tfoot>
+        )}
+      </table>
+    </div>
+  );
+}
+
+function MesaiTop10Sube({ rows }: { rows: MesaiSubeSatiri[] }) {
+  const nf0 = new Intl.NumberFormat("tr-TR", { maximumFractionDigits: 0 });
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full min-w-[640px] border-collapse text-left text-sm">
+        <thead>
+          <tr className="border-b border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900/80">
+            <th className="px-3 py-2 text-center font-semibold text-zinc-700 dark:text-zinc-300">#</th>
+            <th className="px-3 py-2 font-semibold text-zinc-700 dark:text-zinc-300">Şube</th>
+            <th className="px-3 py-2 font-semibold text-zinc-700 dark:text-zinc-300">İlçe</th>
+            <th className="px-3 py-2 text-right font-semibold text-zinc-700 dark:text-zinc-300">Kişi-Ay</th>
+            <th className="px-3 py-2 text-right font-semibold text-zinc-700 dark:text-zinc-300">Toplam Mesai (₺)</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r, i) => (
+            <tr
+              key={r.sube}
+              className={`border-b border-zinc-100 dark:border-zinc-800/80 ${
+                i === 0 ? "bg-indigo-50/60 dark:bg-indigo-950/30" : "hover:bg-zinc-50/80 dark:hover:bg-zinc-900/50"
+              }`}
+            >
+              <td className="px-3 py-2 text-center tabular-nums font-bold text-zinc-500 dark:text-zinc-400">{i + 1}</td>
+              <td className="px-3 py-2 font-medium text-zinc-900 dark:text-zinc-100">{r.sube}</td>
+              <td className="px-3 py-2 text-zinc-600 dark:text-zinc-400">{r.ilce}</td>
+              <td className="px-3 py-2 text-right tabular-nums text-zinc-800 dark:text-zinc-200">{nf0.format(r.personelSayisi)}</td>
+              <td className="px-3 py-2 text-right tabular-nums font-semibold text-zinc-900 dark:text-zinc-100">{nf0.format(r.tutar)} ₺</td>
+            </tr>
+          ))}
         </tbody>
       </table>
     </div>

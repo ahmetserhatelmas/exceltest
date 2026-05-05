@@ -712,6 +712,141 @@ function readAboneRecords(wb, nufusMap, altyapiMap) {
   return { records, ilceler, mahalleler };
 }
 
+const MONTHS_TR_UPPER = [
+  "OCAK", "ŞUBAT", "MART", "NİSAN", "MAYIS", "HAZİRAN",
+  "TEMMUZ", "AĞUSTOS", "EYLÜL", "EKİM", "KASIM", "ARALIK",
+];
+
+/**
+ * İlçelere Göre Mesai Toplam Excel dosyasını okur.
+ * Aylık pivot sayfaları + DATA sayfasından top 10 şube hesaplanır.
+ */
+function readMesai(wb, sourceFileLabel) {
+  // Detect which sheets exist
+  const hasMonthly = MONTHS_TR_UPPER.some((m) =>
+    wb.SheetNames.includes(`${m} 2025`)
+  );
+  if (!hasMonthly && !wb.SheetNames.includes("DATA")) return null;
+
+  // --- Monthly pivot sheets → ilçe-bazlı özet ---
+  const aylik = [];
+  let toplamTutarTum = 0;
+  let toplamPersonelTum = 0;
+
+  for (let mi = 0; mi < 12; mi++) {
+    const sheetName = `${MONTHS_TR_UPPER[mi]} 2025`;
+    const rows = readRows(wb, sheetName);
+    if (rows.length < 2) continue;
+
+    const ilceler = [];
+    let genelToplam = null;
+    let currentIlce = null;
+
+    for (let i = 1; i < rows.length; i++) {
+      const r = rows[i];
+      if (!r || r[0] == null) continue;
+      const label = textCell(r[0]);
+      const labelUp = label.toLocaleUpperCase("tr-TR");
+      const fold = asciiFoldTr(normKey(labelUp));
+
+      const isGenelToplam =
+        fold === "geneltoplam" ||
+        fold === "toplamgeneltoplam" ||
+        labelUp === "GENEL TOPLAM";
+
+      if (isGenelToplam) {
+        genelToplam = {
+          fazlaMesaiSaat: num(r[1]) ?? 0,
+          fazlaMesaiTutar: num(r[2]) ?? 0,
+          cumartesiGun: num(r[3]) ?? 0,
+          cumartesiTutar: num(r[4]) ?? 0,
+          haftaTatiliGun: num(r[5]) ?? 0,
+          haftaTatiliTutar: num(r[6]) ?? 0,
+          bayramGun: num(r[7]) ?? 0,
+          bayramTutar: num(r[8]) ?? 0,
+          genelToplamTutar: num(r[9]) ?? 0,
+          personelSayisi: num(r[10]) ?? 0,
+        };
+        continue;
+      }
+
+      const isDaire =
+        labelUp.includes("DAİRESİ") ||
+        labelUp.includes("BAŞKANLIĞI") ||
+        labelUp.includes("MÜDÜRLÜĞÜ");
+
+      if (!isDaire) {
+        // İlçe satırı
+        currentIlce = {
+          ilce: label.toLocaleUpperCase("tr-TR"),
+          fazlaMesaiSaat: num(r[1]) ?? 0,
+          fazlaMesaiTutar: num(r[2]) ?? 0,
+          cumartesiGun: num(r[3]) ?? 0,
+          cumartesiTutar: num(r[4]) ?? 0,
+          haftaTatiliGun: num(r[5]) ?? 0,
+          haftaTatiliTutar: num(r[6]) ?? 0,
+          bayramGun: num(r[7]) ?? 0,
+          bayramTutar: num(r[8]) ?? 0,
+          genelToplamTutar: num(r[9]) ?? 0,
+          personelSayisi: num(r[10]) ?? 0,
+        };
+        ilceler.push(currentIlce);
+      }
+      // Daire satırları skipped (ilçe toplamı zaten daireleri kapsar)
+    }
+
+    const ayGenelToplam = genelToplam?.genelToplamTutar ?? 0;
+    const ayPersonel = genelToplam?.personelSayisi ?? 0;
+    toplamTutarTum += ayGenelToplam;
+    toplamPersonelTum += ayPersonel;
+
+    aylik.push({
+      ay: mi,
+      ayAd: MONTHS_TR[mi],
+      genelToplamTutar: ayGenelToplam,
+      personelSayisi: ayPersonel,
+      ilceler,
+    });
+  }
+
+  // --- DATA sayfası → Top 10 Şube ---
+  const top10Sube = [];
+  if (wb.SheetNames.includes("DATA")) {
+    const dataRows = readRows(wb, "DATA");
+    const subeMap = new Map();
+    for (let i = 1; i < dataRows.length; i++) {
+      const r = dataRows[i];
+      if (!r) continue;
+      const sube = textCell(r[6]);
+      if (!sube) continue;
+      const ilce = textCell(r[8]).toLocaleUpperCase("tr-TR");
+      const daire = textCell(r[5]);
+      const tutar = num(r[21]) ?? 0;
+      if (!subeMap.has(sube)) {
+        subeMap.set(sube, { sube, ilce, daire, tutar: 0, personelSayisi: 0 });
+      }
+      const s = subeMap.get(sube);
+      s.tutar += tutar;
+      s.personelSayisi += 1;
+    }
+    const sorted = [...subeMap.values()].sort((a, b) => b.tutar - a.tutar);
+    top10Sube.push(...sorted.slice(0, 10));
+  }
+
+  return {
+    sourceFile: sourceFileLabel,
+    dataYear: 2025,
+    ozet: {
+      toplamTutar: toplamTutarTum,
+      toplamAyPersonelSayisi: toplamPersonelTum,
+      kisiBasiOrtalamaTutar:
+        toplamPersonelTum > 0 ? toplamTutarTum / toplamPersonelTum : null,
+    },
+    top10Sube,
+    aylik,
+  };
+}
+
 function main() {
   if (!fs.existsSync(xlsxPath)) {
     console.error("Excel dosyası bulunamadı:", xlsxPath);
@@ -719,6 +854,26 @@ function main() {
   }
 
   const wb = XLSX.readFile(xlsxPath, { cellDates: true });
+
+  // --- Mesai dosyası ---
+  let mesaiPayload = null;
+  const mesaiCandidates = [
+    process.env.MESAI_PATH,
+    path.join(root, "data", "mesai-2025.xlsx"),
+  ].filter(Boolean);
+  for (const p of mesaiCandidates) {
+    if (!p || !fs.existsSync(p)) continue;
+    try {
+      const mwb = XLSX.readFile(p, { cellDates: true });
+      mesaiPayload = readMesai(mwb, path.basename(p));
+      if (mesaiPayload) {
+        console.log("Mesai dosyası okundu:", p);
+        break;
+      }
+    } catch (e) {
+      console.warn("Mesai dosyası okunamadı:", p, e.message);
+    }
+  }
 
   let yakitPayload = null;
   const yakitCandidates = [
@@ -857,6 +1012,7 @@ function main() {
     ...(yakitPayload ? { yakit: yakitPayload } : {}),
     hatUzunluklari,
     kanalHatVarYok,
+    ...(mesaiPayload ? { mesai: mesaiPayload } : {}),
   };
 
   fs.mkdirSync(path.dirname(outPath), { recursive: true });
