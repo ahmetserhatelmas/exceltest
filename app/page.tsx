@@ -3,6 +3,9 @@ import type { DashboardPayload } from "@/lib/dashboard";
 import { getSupabaseServerClient } from "@/lib/supabase";
 import dashboard from "@/data/dashboard.json";
 
+// Her istekte çalışsın; statik sayfa olsa Supabase yalnızca build’de çağrılır.
+export const dynamic = "force-dynamic";
+
 async function getDashboardData(): Promise<DashboardPayload> {
   const supabase = getSupabaseServerClient();
   if (!supabase) return dashboard as unknown as DashboardPayload;
