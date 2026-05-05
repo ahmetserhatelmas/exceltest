@@ -17,6 +17,7 @@ import type {
   IlcePerformansSatiri,
   IlcePerformansToplam,
   MesaiAylik,
+  MesaiDataSheet,
   MesaiIlceSatiri,
   MesaiSubeSatiri,
 } from "@/lib/dashboard";
@@ -2059,6 +2060,18 @@ function MesaiSection({ mesai }: { mesai: DashboardPayload["mesai"] }) {
         <MesaiIlceTable rows={ilceToplam} />
       </div>
 
+      {(mesai.dataSheet?.rows?.length || mesai.dataSheetUrl) && (
+        <div className="rounded-xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
+          <h2 className="px-4 pt-4 pb-1 text-base font-semibold text-zinc-900 dark:text-zinc-100">
+            DATA — Personel mesai detayı
+          </h2>
+          <p className="px-4 pb-3 text-xs text-zinc-500 dark:text-zinc-400">
+            Excel «DATA» sayfasındaki tüm sütunlar. Çok satır olduğu için arama ve sayfalama kullanın.
+          </p>
+          <MesaiDataSheetBlock mesai={mesai} />
+        </div>
+      )}
+
       {/* Top 10 Şube */}
       {mesai.top10Sube.length > 0 && (
         <div className="rounded-xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
@@ -2072,6 +2085,184 @@ function MesaiSection({ mesai }: { mesai: DashboardPayload["mesai"] }) {
       <p className="text-xs text-zinc-400">
         Dosya: {mesai.sourceFile} · Yıl: {mesai.dataYear}
       </p>
+    </div>
+  );
+}
+
+function MesaiDataSheetBlock({
+  mesai,
+}: {
+  mesai: NonNullable<DashboardPayload["mesai"]>;
+}) {
+  const hasInline = mesai.dataSheet && mesai.dataSheet.rows.length > 0;
+  const url = mesai.dataSheetUrl;
+  const [fetched, setFetched] = useState<MesaiDataSheet | null>(null);
+  const [loadErr, setLoadErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (hasInline || !url) return;
+    let cancel = false;
+    fetch(url)
+      .then((r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json() as Promise<MesaiDataSheet>;
+      })
+      .then((j) => {
+        if (!cancel && j?.columns && Array.isArray(j.rows)) setFetched(j);
+      })
+      .catch((e: Error) => {
+        if (!cancel) setLoadErr(e.message);
+      });
+    return () => {
+      cancel = true;
+    };
+  }, [hasInline, url]);
+
+  const data = hasInline ? mesai.dataSheet! : fetched;
+
+  if (!data) {
+    return (
+      <div className="px-4 pb-6 text-sm text-zinc-600 dark:text-zinc-400">
+        {loadErr ? (
+          <>Tablo yüklenemedi ({loadErr}). </>
+        ) : (
+          <>DATA tablosu yükleniyor… </>
+        )}
+        {mesai.dataSheetStats != null && (
+          <span className="text-zinc-500">
+            Beklenen: {mesai.dataSheetStats.rowCount.toLocaleString("tr-TR")} satır,{" "}
+            {mesai.dataSheetStats.columnCount} sütun.
+          </span>
+        )}
+      </div>
+    );
+  }
+
+  return <MesaiDataSheetTable data={data} />;
+}
+
+function MesaiDataSheetTable({ data }: { data: MesaiDataSheet }) {
+  const [q, setQ] = useState("");
+  const [page, setPage] = useState(0);
+  const pageSize = 100;
+  const nf0 = new Intl.NumberFormat("tr-TR", { maximumFractionDigits: 0 });
+  const nf2 = new Intl.NumberFormat("tr-TR", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+
+  const formatCell = (v: string | number | null) => {
+    if (v == null || v === "") return "—";
+    if (typeof v === "number") {
+      return Number.isInteger(v) ? nf0.format(v) : nf2.format(v);
+    }
+    return String(v);
+  };
+
+  const filtered = useMemo(() => {
+    const t = q.trim().toLocaleLowerCase("tr-TR");
+    if (!t) return data.rows;
+    return data.rows.filter((row) =>
+      data.columns.some((col) => {
+        const v = row[col];
+        if (v == null) return false;
+        return String(v).toLocaleLowerCase("tr-TR").includes(t);
+      })
+    );
+  }, [data.columns, data.rows, q]);
+
+  useEffect(() => {
+    setPage(0);
+  }, [q]);
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const currentPage = Math.min(page, totalPages - 1);
+  const pageRows = filtered.slice(
+    currentPage * pageSize,
+    currentPage * pageSize + pageSize
+  );
+
+  const inputCls =
+    "w-full max-w-md rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100";
+
+  return (
+    <div className="flex flex-col gap-3 px-4 pb-4">
+      <div className="flex flex-wrap items-end gap-3">
+        <label className="flex min-w-[200px] flex-1 flex-col gap-1 text-xs font-medium text-zinc-600 dark:text-zinc-400">
+          Satırlarda ara
+          <input
+            type="search"
+            className={inputCls}
+            placeholder="İlçe, şube, ad, TC…"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            autoComplete="off"
+          />
+        </label>
+        <p className="text-xs text-zinc-500 dark:text-zinc-400">
+          {filtered.length.toLocaleString("tr-TR")} / {data.rows.length.toLocaleString("tr-TR")}{" "}
+          satır
+        </p>
+      </div>
+
+      <div className="max-h-[min(70vh,720px)] overflow-auto rounded-lg border border-zinc-200 dark:border-zinc-700">
+        <table className="min-w-max border-collapse text-left text-xs">
+          <thead className="sticky top-0 z-10 border-b border-zinc-200 bg-zinc-100 shadow-sm dark:border-zinc-700 dark:bg-zinc-900">
+            <tr>
+              {data.columns.map((col) => (
+                <th
+                  key={col}
+                  className="whitespace-nowrap px-2 py-2 font-semibold text-zinc-800 dark:text-zinc-200"
+                >
+                  {col}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {pageRows.map((row, ri) => (
+              <tr
+                key={`${currentPage}-${ri}`}
+                className="border-b border-zinc-100 odd:bg-white even:bg-zinc-50/80 dark:border-zinc-800 dark:odd:bg-zinc-950 dark:even:bg-zinc-900/50"
+              >
+                {data.columns.map((col) => (
+                  <td
+                    key={col}
+                    className="max-w-[14rem] truncate whitespace-nowrap px-2 py-1.5 tabular-nums text-zinc-800 dark:text-zinc-200"
+                    title={formatCell(row[col])}
+                  >
+                    {formatCell(row[col])}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-zinc-600 dark:text-zinc-400">
+        <span>
+          Sayfa {currentPage + 1} / {totalPages} · Sayfa başına {pageSize}
+        </span>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            className="rounded-lg border border-zinc-300 bg-white px-3 py-1.5 font-medium text-zinc-800 enabled:hover:bg-zinc-50 disabled:opacity-40 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-200 dark:enabled:hover:bg-zinc-800"
+            disabled={currentPage <= 0}
+            onClick={() => setPage((p) => Math.max(0, p - 1))}
+          >
+            Önceki
+          </button>
+          <button
+            type="button"
+            className="rounded-lg border border-zinc-300 bg-white px-3 py-1.5 font-medium text-zinc-800 enabled:hover:bg-zinc-50 disabled:opacity-40 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-200 dark:enabled:hover:bg-zinc-800"
+            disabled={currentPage >= totalPages - 1}
+            onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+          >
+            Sonraki
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

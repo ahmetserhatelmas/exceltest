@@ -8,6 +8,7 @@ const root = path.join(__dirname, "..");
 const xlsxPath =
   process.env.EXCEL_SOURCE_PATH ?? path.join(root, "data", "Veri son (2).xlsx");
 const outPath = path.join(root, "data", "dashboard.json");
+const mesaiDataSheetPublicPath = path.join(root, "public", "mesai-data-sheet.json");
 const DATA_YEAR = Number(process.env.DATA_YEAR ?? "2025");
 const MONTHS_TR = [
   "Ocak",
@@ -717,14 +718,53 @@ const MONTHS_TR_UPPER = [
   "TEMMUZ", "AĞUSTOS", "EYLÜL", "EKİM", "KASIM", "ARALIK",
 ];
 
+function mesaiCellToJson(v) {
+  if (v === null || v === undefined || v === "") return null;
+  if (v instanceof Date) return v.toISOString().slice(0, 10);
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  const t = textCell(v);
+  if (!t) return null;
+  if (/\*/.test(t)) return t;
+  const n = num(v);
+  if (n != null && Number.isFinite(n)) return n;
+  return t;
+}
+
+/** DATA sayfası → JSON (sütun başlıkları + satırlar) */
+function buildMesaiDataSheet(dataRows) {
+  if (!dataRows?.length) return null;
+  const rawHeader = dataRows[0].map((c, i) => textCell(c) || `Sütun_${i}`);
+  const seen = new Map();
+  const columns = rawHeader.map((h, i) => {
+    const base = h || `Sütun_${i}`;
+    const n = (seen.get(base) ?? 0) + 1;
+    seen.set(base, n);
+    return n > 1 ? `${base} (${n})` : base;
+  });
+  const rows = [];
+  for (let i = 1; i < dataRows.length; i++) {
+    const r = dataRows[i];
+    if (!r) continue;
+    const row = {};
+    let hasAny = false;
+    for (let c = 0; c < columns.length; c++) {
+      const val = mesaiCellToJson(r[c]);
+      row[columns[c]] = val;
+      if (val != null && val !== "") hasAny = true;
+    }
+    if (hasAny) rows.push(row);
+  }
+  return { columns, rows };
+}
+
 /**
  * İlçelere Göre Mesai Toplam Excel dosyasını okur.
  * Aylık pivot sayfaları + DATA sayfasından top 10 şube hesaplanır.
  */
-function readMesai(wb, sourceFileLabel) {
+function readMesai(wb, sourceFileLabel, dataYear = DATA_YEAR) {
   // Detect which sheets exist
   const hasMonthly = MONTHS_TR_UPPER.some((m) =>
-    wb.SheetNames.includes(`${m} 2025`)
+    wb.SheetNames.includes(`${m} ${dataYear}`)
   );
   if (!hasMonthly && !wb.SheetNames.includes("DATA")) return null;
 
@@ -734,7 +774,7 @@ function readMesai(wb, sourceFileLabel) {
   let toplamPersonelTum = 0;
 
   for (let mi = 0; mi < 12; mi++) {
-    const sheetName = `${MONTHS_TR_UPPER[mi]} 2025`;
+    const sheetName = `${MONTHS_TR_UPPER[mi]} ${dataYear}`;
     const rows = readRows(wb, sheetName);
     if (rows.length < 2) continue;
 
@@ -809,10 +849,13 @@ function readMesai(wb, sourceFileLabel) {
     });
   }
 
-  // --- DATA sayfası → Top 10 Şube ---
+  // --- DATA sayfası → ham tablo + Top 10 Şube ---
+  let dataSheet = null;
+  let dataSheetFileRel = null;
   const top10Sube = [];
   if (wb.SheetNames.includes("DATA")) {
     const dataRows = readRows(wb, "DATA");
+    dataSheet = buildMesaiDataSheet(dataRows);
     const subeMap = new Map();
     for (let i = 1; i < dataRows.length; i++) {
       const r = dataRows[i];
@@ -833,9 +876,9 @@ function readMesai(wb, sourceFileLabel) {
     top10Sube.push(...sorted.slice(0, 10));
   }
 
-  return {
+  const mesaiOut = {
     sourceFile: sourceFileLabel,
-    dataYear: 2025,
+    dataYear,
     ozet: {
       toplamTutar: toplamTutarTum,
       toplamAyPersonelSayisi: toplamPersonelTum,
@@ -845,6 +888,30 @@ function readMesai(wb, sourceFileLabel) {
     top10Sube,
     aylik,
   };
+
+  if (dataSheet && dataSheet.rows.length) {
+    fs.mkdirSync(path.dirname(mesaiDataSheetPublicPath), { recursive: true });
+    fs.writeFileSync(
+      mesaiDataSheetPublicPath,
+      JSON.stringify(dataSheet),
+      "utf-8"
+    );
+    dataSheetFileRel = "/mesai-data-sheet.json";
+    mesaiOut.dataSheetUrl = dataSheetFileRel;
+    mesaiOut.dataSheetStats = {
+      rowCount: dataSheet.rows.length,
+      columnCount: dataSheet.columns.length,
+    };
+    console.log(
+      "Mesai DATA →",
+      mesaiDataSheetPublicPath,
+      `(${dataSheet.rows.length} satır)`
+    );
+  } else if (fs.existsSync(mesaiDataSheetPublicPath)) {
+    fs.unlinkSync(mesaiDataSheetPublicPath);
+  }
+
+  return mesaiOut;
 }
 
 function main() {
@@ -865,7 +932,7 @@ function main() {
     if (!p || !fs.existsSync(p)) continue;
     try {
       const mwb = XLSX.readFile(p, { cellDates: true });
-      mesaiPayload = readMesai(mwb, path.basename(p));
+      mesaiPayload = readMesai(mwb, path.basename(p), DATA_YEAR);
       if (mesaiPayload) {
         console.log("Mesai dosyası okundu:", p);
         break;

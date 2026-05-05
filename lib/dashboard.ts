@@ -193,6 +193,12 @@ export type MesaiSubeSatiri = {
   personelSayisi: number;
 };
 
+/** Mesai Excel «DATA» sayfası — başlık satırına göre üretilir */
+export type MesaiDataSheet = {
+  columns: string[];
+  rows: Record<string, string | number | null>[];
+};
+
 export type MesaiPayload = {
   sourceFile: string;
   dataYear: number;
@@ -203,6 +209,14 @@ export type MesaiPayload = {
   };
   top10Sube: MesaiSubeSatiri[];
   aylik: MesaiAylik[];
+  /**
+   * Ham DATA satırları (eski senkron / küçük setler).
+   * Üretimde genelde `dataSheetUrl` + `public/mesai-data-sheet.json` kullanılır.
+   */
+  dataSheet?: MesaiDataSheet;
+  /** Örn. `/mesai-data-sheet.json` — istemci tarafında yüklenir */
+  dataSheetUrl?: string;
+  dataSheetStats?: { rowCount: number; columnCount: number };
 };
 
 export type KanalHatVarYokDurum = "var" | "yok" | "kismi" | "diger";
