@@ -107,6 +107,27 @@ const NAV_SECTIONS: { id: SectionId; label: string }[] = [
 
 type Props = { data: DashboardPayload };
 
+/** Üst filtrelerle uyumlu mesai tutarı (ilçe seçiliyse o ilçe; mahalle Excel’de yok). */
+function mesaiGiderTutar(
+  mesai: DashboardPayload["mesai"],
+  selectedYear: number,
+  monthIndex: number,
+  ilceFilter: string
+): number {
+  if (!mesai?.aylik?.length) return 0;
+  if (selectedYear !== mesai.dataYear) return 0;
+  const aylar =
+    monthIndex === -1 ? mesai.aylik : mesai.aylik.filter((a) => a.ay === monthIndex);
+  let sum = 0;
+  for (const ay of aylar) {
+    for (const row of ay.ilceler) {
+      if (ilceFilter && row.ilce !== ilceFilter) continue;
+      sum += row.genelToplamTutar;
+    }
+  }
+  return sum;
+}
+
 export default function Dashboard({ data }: Props) {
   const [activeSection, setActiveSection] = useState<SectionId>("ozet");
   const [ilce, setIlce] = useState("");
@@ -165,6 +186,11 @@ export default function Dashboard({ data }: Props) {
   const kpi = useMemo(
     () => (isYearly ? agg : statsForMonth(agg, monthIndex)),
     [agg, isYearly, monthIndex]
+  );
+
+  const mesaiUstFiltre = useMemo(
+    () => mesaiGiderTutar(data.mesai, selectedYear, monthIndex, ilce),
+    [data.mesai, selectedYear, monthIndex, ilce]
   );
 
   /**
@@ -277,6 +303,8 @@ export default function Dashboard({ data }: Props) {
         detayTablo: detayBos,
         toplamKwh: null as number | null,
         toplamTahakkuk: null as number | null,
+        yakitTahakkuk: null as number | null,
+        mesaiGider: null as number | null,
         toplamGider: null as number | null,
         netGelir: null as number | null,
         ilceTablo: [] as Array<{
@@ -319,7 +347,8 @@ export default function Dashboard({ data }: Props) {
     const toplamTah = detayTablo.reduce((s, r) => s + r.tahakkuk, 0);
     const suTah = kpi.totalTahakkuk;
     const yakitTah = yakitTahakkukuForPeriod(data.yakit, selectedYear, ilce);
-    const toplamGider = toplamTah + yakitTah;
+    const mesaiTah = mesaiGiderTutar(data.mesai, selectedYear, monthIndex, ilce);
+    const toplamGider = toplamTah + yakitTah + mesaiTah;
     const netGelir = suTah - toplamGider;
 
     const ilceListe = ilce.trim()
@@ -374,6 +403,8 @@ export default function Dashboard({ data }: Props) {
       detayTablo,
       toplamKwh,
       toplamTahakkuk: toplamTah,
+      yakitTahakkuk: yakitTah,
+      mesaiGider: mesaiTah,
       toplamGider,
       netGelir,
       ilceTablo,
@@ -381,6 +412,7 @@ export default function Dashboard({ data }: Props) {
   }, [
     data.elektrik,
     data.yakit,
+    data.mesai,
     data.ilceler,
     dataYear,
     selectedYear,
@@ -498,91 +530,95 @@ export default function Dashboard({ data }: Props) {
         </p>
       </header>
 
-      {/* ── FİLTRELER ── */}
+      {/* ── FİLTRELER ── (yıl/ay üstte; coğrafi filtreler altta — müşteri notu) */}
       <div className="border-b border-zinc-200 bg-white px-6 py-3 dark:border-zinc-800 dark:bg-zinc-950">
-        <div className="flex flex-wrap items-end gap-3">
-          <label
-            className="flex flex-col gap-1 text-xs font-medium text-zinc-600 dark:text-zinc-400"
-            title="Abone ve su tüketimi: veri yılı ile bir sonraki plan yılı (ör. 2025 / 2026)."
-          >
-            Yıl
-            <select
-              className={selectCls}
-              value={selectedYear}
-              onChange={(e) => setSelectedYear(Number(e.target.value))}
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-wrap items-end gap-3">
+            <label
+              className="flex flex-col gap-1 text-xs font-medium text-zinc-600 dark:text-zinc-400"
+              title="Abone ve su tüketimi: veri yılı ile bir sonraki plan yılı (ör. 2025 / 2026)."
             >
-              {availableYears.map((y) => (
-                <option key={y} value={y}>
-                  {y}
-                </option>
-              ))}
-            </select>
-          </label>
+              Yıl
+              <select
+                className={selectCls}
+                value={selectedYear}
+                onChange={(e) => setSelectedYear(Number(e.target.value))}
+              >
+                {availableYears.map((y) => (
+                  <option key={y} value={y}>
+                    {y}
+                  </option>
+                ))}
+              </select>
+            </label>
 
-          <label
-            className="flex flex-col gap-1 text-xs font-medium text-zinc-600 dark:text-zinc-400"
-            title="Elektrik tüketimi Excel’de ay sütunlarına göre filtrelenir."
-          >
-            Ay
-            <select
-              className={selectCls}
-              value={monthIndex}
-              onChange={(e) => setMonthIndex(Number(e.target.value))}
+            <label
+              className="flex flex-col gap-1 text-xs font-medium text-zinc-600 dark:text-zinc-400"
+              title="Elektrik ve mesai özetleri Excel’deki aya göre; su tahakkuku bu ayla uyumludur."
             >
-              <option value={-1}>Tümü (Yıllık)</option>
-              {data.months.map((ay, i) => (
-                <option key={ay} value={i}>
-                  {ay}
-                </option>
-              ))}
-            </select>
-          </label>
+              Ay
+              <select
+                className={selectCls}
+                value={monthIndex}
+                onChange={(e) => setMonthIndex(Number(e.target.value))}
+              >
+                <option value={-1}>Tümü (Yıllık)</option>
+                {data.months.map((ay, i) => (
+                  <option key={ay} value={i}>
+                    {ay}
+                  </option>
+                ))}
+              </select>
+            </label>
 
-          <label className="flex flex-col gap-1 text-xs font-medium text-zinc-600 dark:text-zinc-400">
-            İlçe
-            <select
-              className={selectCls}
-              value={ilce}
-              onChange={(e) => {
-                setIlce(e.target.value);
-                setMahalle("");
-              }}
-            >
-              <option value="">Tümü</option>
-              {data.ilceler.map((i) => (
-                <option key={i} value={i}>
-                  {i}
-                </option>
-              ))}
-            </select>
-          </label>
+            <p className="ml-auto self-end text-xs text-zinc-500">
+              <strong>{filtered.length}</strong> defter ·{" "}
+              <strong>
+                {selectedMonthLabel} {dataYear}
+              </strong>
+              {hatYillarList.length > 0 && (
+                <> · Hat envanteri yılı: &quot;Altyapı Hatları&quot; sekmesinden</>
+              )}
+            </p>
+          </div>
 
-          <label className="flex flex-col gap-1 text-xs font-medium text-zinc-600 dark:text-zinc-400">
-            Mahalle
-            <select
-              className={selectCls}
-              value={mahalle}
-              disabled={!ilce}
-              onChange={(e) => setMahalle(e.target.value)}
-            >
-              <option value="">Tümü</option>
-              {mahalleOptions.map((m) => (
-                <option key={m} value={m}>
-                  {m}
-                </option>
-              ))}
-            </select>
-          </label>
+          <div className="flex flex-wrap items-end gap-3 border-t border-zinc-100 pt-3 dark:border-zinc-800/80">
+            <label className="flex flex-col gap-1 text-xs font-medium text-zinc-600 dark:text-zinc-400">
+              İlçe
+              <select
+                className={selectCls}
+                value={ilce}
+                onChange={(e) => {
+                  setIlce(e.target.value);
+                  setMahalle("");
+                }}
+              >
+                <option value="">Tümü</option>
+                {data.ilceler.map((i) => (
+                  <option key={i} value={i}>
+                    {i}
+                  </option>
+                ))}
+              </select>
+            </label>
 
-          <p className="ml-auto self-end text-xs text-zinc-500">
-            <strong>{filtered.length}</strong> defter ·{" "}
-            <strong>
-              {selectedMonthLabel} {dataYear}
-            </strong>
-            {hatYillarList.length > 0 && (
-              <> · Hat envanteri yılı: &quot;Altyapı Hatları&quot; sekmesinden</>
-            )}
-          </p>
+            <label className="flex flex-col gap-1 text-xs font-medium text-zinc-600 dark:text-zinc-400">
+              Mahalle
+              <select
+                className={selectCls}
+                value={mahalle}
+                disabled={!ilce}
+                onChange={(e) => setMahalle(e.target.value)}
+              >
+                <option value="">Tümü</option>
+                {mahalleOptions.map((m) => (
+                  <option key={m} value={m}>
+                    {m}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
         </div>
       </div>
 
@@ -631,8 +667,16 @@ export default function Dashboard({ data }: Props) {
               title="Toplam gider"
               subtitle={
                 elektrikDonem?.yilOk
-                  ? `elektrik + yakıt tah. · ${isYearly ? "yıllık" : selectedMonthLabel}${ilce ? ` · ${ilce}` : ""}`
+                  ? `elektrik + yakıt + mesai tah. · ${isYearly ? "yıllık" : selectedMonthLabel}${ilce ? ` · ${ilce}` : ""}${mahalle ? " · mesai ilçe toplamı" : ""}`
                   : `${selectedYear} plan · henüz tam veri yok`
+              }
+              hint={
+                elektrikDonem?.yilOk &&
+                elektrikDonem.toplamTahakkuk != null &&
+                elektrikDonem.yakitTahakkuk != null &&
+                elektrikDonem.mesaiGider != null
+                  ? `Elektrik tah.: ${nf.format(elektrikDonem.toplamTahakkuk)} ₺ · Yakıt: ${nf.format(elektrikDonem.yakitTahakkuk)} ₺ · Mesai: ${nf.format(elektrikDonem.mesaiGider)} ₺`
+                  : undefined
               }
               value={
                 elektrikDonem?.toplamGider != null
@@ -644,15 +688,16 @@ export default function Dashboard({ data }: Props) {
                         selectedYear,
                         ilce
                       );
-                      if (!data.elektrik && !data.yakit) return "—";
-                      return `${nf.format(eTah + yTah)} ₺`;
+                      const mTah = mesaiUstFiltre;
+                      if (!data.elektrik && !data.yakit && mTah === 0) return "—";
+                      return `${nf.format(eTah + yTah + mTah)} ₺`;
                     })()
               }
               valueCompact
             />
             <KpiCard
               title="Net gelir"
-              subtitle="su tah. − toplam gider (üst filtreler)"
+              subtitle="su tah. − (elektrik + yakıt + mesai) — üst yıl/ay/ilçe"
               value={
                 elektrikDonem?.netGelir != null
                   ? `${nf.format(elektrikDonem.netGelir)} ₺`
@@ -1503,8 +1548,9 @@ export default function Dashboard({ data }: Props) {
                   <strong>İLÇE</strong> ve <strong>MAHALLE</strong> sütunları vardır; üst
                   filtrelerdeki ilçe/mahalle ile aynı konum satırları toplanır. Üstteki{" "}
                   <strong>Toplam tahakkuk</strong> ve <strong>Net gelir</strong> (su tah. −{" "}
-                  <strong>toplam gider</strong>) aynı ay ve coğrafi filtredeki abone
-                  tahakkukunu kullanır.
+                  <strong>toplam gider</strong>; giderde <strong>mesai</strong> da dahil) aynı ay ve
+                  coğrafi filtredeki abone tahakkukunu kullanır. Mesai tutarı ilçe bazlıdır; mahalle
+                  seçili olsa da mesai o ilçenin toplamıdır.
                   {!elektrikDonem?.yilOk && (
                     <span className="block pt-1 font-medium text-amber-700 dark:text-amber-400">
                       {selectedYear} plan yılı seçili: Excel&apos;e bu yıl için elektrik
@@ -1959,38 +2005,48 @@ function MesaiSection({ mesai }: { mesai: DashboardPayload["mesai"] }) {
 
   return (
     <div className="flex flex-col gap-6">
-      {/* Filtreler */}
-      <div className="flex flex-wrap gap-3">
-        <label className="flex flex-col gap-1 text-xs font-medium text-zinc-600 dark:text-zinc-400">
-          Ay
-          <select
-            className={selectCls}
-            value={seciliAy}
-            onChange={(e) => setSeciliAy(Number(e.target.value))}
-          >
-            <option value={-1}>Tüm aylar</option>
-            {mesai.aylik.map((a) => (
-              <option key={a.ay} value={a.ay}>
-                {a.ayAd}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="flex flex-col gap-1 text-xs font-medium text-zinc-600 dark:text-zinc-400">
-          İlçe
-          <select
-            className={selectCls}
-            value={seciliIlce}
-            onChange={(e) => setSeciliIlce(e.target.value)}
-          >
-            <option value="">Tüm ilçeler</option>
-            {ilceSecenekleri.map((i) => (
-              <option key={i} value={i}>
-                {i}
-              </option>
-            ))}
-          </select>
-        </label>
+      {/* Filtreler: ay üstte, ilçe altta (genel pano ile uyumlu) */}
+      <div className="flex flex-col gap-3">
+        <div className="flex flex-col gap-2">
+          <div className="flex flex-wrap gap-3">
+            <label className="flex flex-col gap-1 text-xs font-medium text-zinc-600 dark:text-zinc-400">
+              Ay
+              <select
+                className={selectCls}
+                value={seciliAy}
+                onChange={(e) => setSeciliAy(Number(e.target.value))}
+              >
+                <option value={-1}>Tüm aylar</option>
+                {mesai.aylik.map((a) => (
+                  <option key={a.ay} value={a.ay}>
+                    {a.ayAd}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+            Yıl: üstteki genel <strong className="text-zinc-600 dark:text-zinc-300">Yıl</strong> filtresi
+            (mesai verisi {mesai.dataYear} için geçerlidir).
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-3 border-t border-zinc-100 pt-3 dark:border-zinc-800/80">
+          <label className="flex flex-col gap-1 text-xs font-medium text-zinc-600 dark:text-zinc-400">
+            İlçe
+            <select
+              className={selectCls}
+              value={seciliIlce}
+              onChange={(e) => setSeciliIlce(e.target.value)}
+            >
+              <option value="">Tüm ilçeler</option>
+              {ilceSecenekleri.map((i) => (
+                <option key={i} value={i}>
+                  {i}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
       </div>
 
       {/* KPI Kartları */}
@@ -2568,14 +2624,20 @@ function KpiCard({
   subtitle,
   value,
   valueCompact = false,
+  hint,
 }: {
   title: string;
   subtitle: string;
   value: string;
   valueCompact?: boolean;
+  /** Üzerine gelince kırılım (ör. gider kalemleri) */
+  hint?: string;
 }) {
   return (
-    <div className="min-w-0 rounded-xl border border-zinc-200 bg-zinc-50/60 p-3 dark:border-zinc-800 dark:bg-zinc-900/40">
+    <div
+      className="min-w-0 rounded-xl border border-zinc-200 bg-zinc-50/60 p-3 dark:border-zinc-800 dark:bg-zinc-900/40"
+      title={hint}
+    >
       <p className="text-[10px] font-medium uppercase tracking-wide text-zinc-500">
         {title}
       </p>

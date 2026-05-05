@@ -114,7 +114,7 @@ export type DashboardPayload = {
     toplamElektrikTuketimiKwh: number;
     toplamElektrikTahakkuku: number;
     toplamSuTahakkuku: number;
-    /** Su tahakkuku − toplam gider (gider = elektrik + yakıt; yakıt yoksa yalnız elektrik) */
+    /** Su tahakkuku − toplam gider (gider = elektrik + yakıt + mesai; eksik kalemler 0) */
     netGelir: number;
     detay: ElektrikDetaySatiri[];
     ilceDetay?: Array<{
