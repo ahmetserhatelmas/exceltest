@@ -813,7 +813,10 @@ function readMesai(wb, sourceFileLabel, dataYear = DATA_YEAR) {
       const isDaire =
         labelUp.includes("DAİRESİ") ||
         labelUp.includes("BAŞKANLIĞI") ||
-        labelUp.includes("MÜDÜRLÜĞÜ");
+        labelUp.includes("MÜDÜRLÜĞÜ") ||
+        labelUp.includes("MÜŞAVİRLİĞİ") ||
+        labelUp.includes("MÜŞAVIRLIĞI") ||
+        labelUp.includes("HUKUK");
 
       if (!isDaire) {
         // İlçe satırı
@@ -914,6 +917,17 @@ function readMesai(wb, sourceFileLabel, dataYear = DATA_YEAR) {
   return mesaiOut;
 }
 
+/** Pivot «ilçe» satırlarını Veri.xlsx ilçe listesiyle süz (1.HUKUK MÜŞAVİRLİĞİ vb.) */
+function filterMesaiIlcelerToVeriList(mesai, allowedIlceler) {
+  if (!mesai?.aylik?.length || !allowedIlceler?.length) return;
+  const allow = new Set(
+    allowedIlceler.map((x) => String(x).trim().toLocaleUpperCase("tr-TR"))
+  );
+  for (const ay of mesai.aylik) {
+    ay.ilceler = ay.ilceler.filter((row) => allow.has(row.ilce));
+  }
+}
+
 function main() {
   if (!fs.existsSync(xlsxPath)) {
     console.error("Excel dosyası bulunamadı:", xlsxPath);
@@ -970,6 +984,8 @@ function main() {
     nufusMap,
     altyapiMap
   );
+
+  if (mesaiPayload) filterMesaiIlcelerToVeriList(mesaiPayload, ilceler);
 
   const elektrikDetay = [
     readElektrikSheetSummary(

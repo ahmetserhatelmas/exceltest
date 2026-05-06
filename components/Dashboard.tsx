@@ -5,6 +5,7 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
+  LabelList,
   Legend,
   ResponsiveContainer,
   Tooltip,
@@ -16,11 +17,18 @@ import type {
   HatUzunlukHucre,
   IlcePerformansSatiri,
   IlcePerformansToplam,
-  MesaiAylik,
   MesaiDataSheet,
   MesaiIlceSatiri,
   MesaiSubeSatiri,
 } from "@/lib/dashboard";
+import {
+  aggregateMesaiByAy,
+  aggregateMesaiByIlce,
+  collectDaireSubeOptions,
+  resolveMesaiSheetColumns,
+  resolveTutarColumn,
+  type MesaiTurFiltre,
+} from "@/lib/mesai-data-sheet";
 
 /** Hat tablosu: tüm yılların işletme+yatırım eklemesi (Excel satır toplamı) */
 const HAT_YIL_TUMU = "tumu" as const;
@@ -63,6 +71,8 @@ function formatMetreCell(v: number | null | undefined) {
 }
 
 const chartMargin = { top: 8, right: 12, left: 22, bottom: 8 } as const;
+/** Mesai histogram: üstte etiket alanı (okunabilir tutar) */
+const mesaiChartMargin = { top: 28, right: 16, left: 28, bottom: 12 } as const;
 const yAxisWidth = 108;
 
 function formatYAxisTl(v: unknown): string {
@@ -1792,9 +1802,28 @@ export default function Dashboard({ data }: Props) {
               </div>
             )}
 
-            {activeSection === "mesai" && (
-              <MesaiSection mesai={data.mesai} />
-            )}
+            {activeSection === "mesai" &&
+              (data.mesai ? (
+                <MesaiSection
+                  mesai={data.mesai}
+                  monthIndex={monthIndex}
+                  selectedYear={selectedYear}
+                  dataYear={dataYear}
+                  months={data.months}
+                  globalIlce={ilce}
+                  setGlobalIlce={setIlce}
+                />
+              ) : (
+                <p className="rounded-lg border border-dashed border-zinc-300 bg-zinc-50 px-4 py-8 text-center text-sm text-zinc-600 dark:border-zinc-600 dark:bg-zinc-900/40 dark:text-zinc-400">
+                  Mesai verisi bulunamadı.{" "}
+                  <code className="rounded bg-zinc-200 px-1 dark:bg-zinc-800">
+                    data/mesai-2025.xlsx
+                  </code>{" "}
+                  ekleyip{" "}
+                  <code className="rounded bg-zinc-200 px-1 dark:bg-zinc-800">npm run data</code>{" "}
+                  çalıştırın.
+                </p>
+              ))}
             </>
             )}
           </div>
@@ -1914,41 +1943,111 @@ function YakitIlceTable({
 
 /* ─── MESAİ BİLEŞENLERİ ─── */
 
-function MesaiSection({ mesai }: { mesai: DashboardPayload["mesai"] }) {
+const MESAI_TUR_SEC: { id: MesaiTurFiltre; label: string }[] = [
+  { id: "genel", label: "Genel toplam" },
+  { id: "fazla", label: "Fazla mesai" },
+  { id: "cumartesi", label: "Cumartesi" },
+  { id: "haftatatil", label: "Hafta tatili" },
+  { id: "bayram", label: "Bayram / resmi tatil" },
+];
+
+function MesaiSection({
+  mesai,
+  monthIndex,
+  selectedYear,
+  dataYear,
+  months,
+  globalIlce,
+  setGlobalIlce,
+}: {
+  mesai: NonNullable<DashboardPayload["mesai"]>;
+  monthIndex: number;
+  selectedYear: number;
+  dataYear: number;
+  months: string[];
+  globalIlce: string;
+  setGlobalIlce: (s: string) => void;
+}) {
   const nf0 = new Intl.NumberFormat("tr-TR", { maximumFractionDigits: 0 });
   const nf2 = new Intl.NumberFormat("tr-TR", {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });
-  const [seciliAy, setSeciliAy] = useState<number>(-1); // -1 = tümü
-  const [seciliIlce, setSeciliIlce] = useState("");
-
-  if (!mesai) {
-    return (
-      <p className="rounded-lg border border-dashed border-zinc-300 bg-zinc-50 px-4 py-8 text-center text-sm text-zinc-600 dark:border-zinc-600 dark:bg-zinc-900/40 dark:text-zinc-400">
-        Mesai verisi bulunamadı.{" "}
-        <code className="rounded bg-zinc-200 px-1 dark:bg-zinc-800">
-          data/mesai-2025.xlsx
-        </code>{" "}
-        dosyasını ekleyip{" "}
-        <code className="rounded bg-zinc-200 px-1 dark:bg-zinc-800">npm run data</code>{" "}
-        çalıştırın.
-      </p>
-    );
-  }
-
-  // Aya göre filtreli veri
-  const filtreliAylik = useMemo(
-    () => (seciliAy === -1 ? mesai.aylik : mesai.aylik.filter((a) => a.ay === seciliAy)),
-    [mesai.aylik, seciliAy]
+  const [daireFiltre, setDaireFiltre] = useState("");
+  const [subeFiltre, setSubeFiltre] = useState("");
+  const [mesaiTur, setMesaiTur] = useState<MesaiTurFiltre>("genel");
+  const [sheetData, setSheetData] = useState<MesaiDataSheet | null>(
+    () => (mesai.dataSheet?.rows?.length ? mesai.dataSheet : null)
   );
 
-  // İlçe bazlı toplam (filtrelenmiş aylara göre)
-  const ilceToplam = useMemo(() => {
+  useEffect(() => {
+    if (sheetData || !mesai.dataSheetUrl) return;
+    let cancel = false;
+    fetch(mesai.dataSheetUrl)
+      .then((r) => {
+        if (!r.ok) throw new Error(String(r.status));
+        return r.json() as Promise<MesaiDataSheet>;
+      })
+      .then((j) => {
+        if (!cancel && j?.columns?.length && j.rows) setSheetData(j);
+      })
+      .catch(() => {
+        if (!cancel) setSheetData(null);
+      });
+    return () => {
+      cancel = true;
+    };
+  }, [mesai.dataSheetUrl, sheetData]);
+
+  useEffect(() => {
+    setSubeFiltre("");
+  }, [daireFiltre]);
+
+  const sheetCols = useMemo(
+    () => (sheetData ? resolveMesaiSheetColumns(sheetData.columns) : null),
+    [sheetData]
+  );
+  const tutarKey = useMemo(() => {
+    if (!sheetData) return null;
+    return resolveTutarColumn(mesaiTur, sheetData.columns);
+  }, [sheetData, mesaiTur]);
+
+  const daireSubeOpts = useMemo(
+    () => (sheetData && sheetCols ? collectDaireSubeOptions(sheetData, sheetCols) : null),
+    [sheetData, sheetCols]
+  );
+
+  const subeSecenekleri = useMemo(() => {
+    if (!daireSubeOpts) return [];
+    if (!daireFiltre) {
+      const all = new Set<string>();
+      for (const arr of daireSubeOpts.subelerByDaire.values()) {
+        for (const s of arr) all.add(s);
+      }
+      return [...all].sort((a, b) => a.localeCompare(b, "tr-TR"));
+    }
+    return daireSubeOpts.subelerByDaire.get(daireFiltre) ?? [];
+  }, [daireSubeOpts, daireFiltre]);
+
+  const sheetFilters = useMemo(
+    () => ({
+      daire: daireFiltre,
+      sube: subeFiltre,
+      ilce: globalIlce,
+    }),
+    [daireFiltre, subeFiltre, globalIlce]
+  );
+
+  const filtreliAylik = useMemo(
+    () => (monthIndex === -1 ? mesai.aylik : mesai.aylik.filter((a) => a.ay === monthIndex)),
+    [mesai.aylik, monthIndex]
+  );
+
+  const ilceToplamPivot = useMemo(() => {
     const acc = new Map<string, MesaiIlceSatiri & { ayCount: number }>();
     for (const ay of filtreliAylik) {
       for (const s of ay.ilceler) {
-        if (seciliIlce && s.ilce !== seciliIlce) continue;
+        if (globalIlce && s.ilce !== globalIlce) continue;
         if (!acc.has(s.ilce)) {
           acc.set(s.ilce, { ...s, ayCount: 0 });
         } else {
@@ -1968,95 +2067,174 @@ function MesaiSection({ mesai }: { mesai: DashboardPayload["mesai"] }) {
       }
     }
     return [...acc.values()].sort((a, b) => b.genelToplamTutar - a.genelToplamTutar);
-  }, [filtreliAylik, seciliIlce]);
+  }, [filtreliAylik, globalIlce]);
 
-  // Aylık bar chart verisi
-  const ayBarData = useMemo(
-    () =>
-      mesai.aylik.map((a) => {
-        const filtered = seciliIlce
-          ? a.ilceler.filter((i) => i.ilce === seciliIlce)
-          : a.ilceler;
-        return {
-          ay: a.ayAd,
-          tutar: filtered.reduce((s, i) => s + i.genelToplamTutar, 0),
-          personel: filtered.reduce((s, i) => s + i.personelSayisi, 0),
-        };
-      }),
-    [mesai.aylik, seciliIlce]
-  );
+  const ilceAggSheet = useMemo(() => {
+    if (!sheetData || !sheetCols?.ilce || !tutarKey) return null;
+    return aggregateMesaiByIlce(sheetData, { ...sheetCols, tutarKey }, sheetFilters);
+  }, [sheetData, sheetCols, tutarKey, sheetFilters]);
 
-  // KPI hesaplama
+  const ayBarData = useMemo(() => {
+    if (sheetData && sheetCols?.donem && tutarKey) {
+      return aggregateMesaiByAy(
+        sheetData,
+        { ...sheetCols, tutarKey },
+        months,
+        sheetFilters,
+        monthIndex === -1 ? null : monthIndex
+      );
+    }
+    return mesai.aylik.map((a) => {
+      const filtered = globalIlce ? a.ilceler.filter((i) => i.ilce === globalIlce) : a.ilceler;
+      return {
+        ay: a.ayAd,
+        tutar: filtered.reduce((s, i) => s + i.genelToplamTutar, 0),
+        personel: filtered.reduce((s, i) => s + i.personelSayisi, 0),
+      };
+    });
+  }, [sheetData, sheetCols, tutarKey, sheetFilters, months, monthIndex, mesai.aylik, globalIlce]);
+
+  const ilceToplam = ilceAggSheet
+    ? ilceAggSheet.map((r) => ({
+        ilce: r.ilce,
+        fazlaMesaiSaat: 0,
+        fazlaMesaiTutar: 0,
+        cumartesiGun: 0,
+        cumartesiTutar: 0,
+        haftaTatiliGun: 0,
+        haftaTatiliTutar: 0,
+        bayramGun: 0,
+        bayramTutar: 0,
+        genelToplamTutar: r.tutar,
+        personelSayisi: r.personel,
+      }))
+    : ilceToplamPivot;
+
   const toplamTutar = ilceToplam.reduce((s, r) => s + r.genelToplamTutar, 0);
-  const toplamPersonel = filtreliAylik.reduce((s, a) => s + a.personelSayisi, 0);
+  const toplamPersonel = ilceAggSheet
+    ? ilceAggSheet.reduce((s, r) => s + r.personel, 0)
+    : filtreliAylik.reduce((s, a) => s + a.personelSayisi, 0);
   const kisiBasiTutar = toplamPersonel > 0 ? toplamTutar / toplamPersonel : null;
 
-  // İlçe seçenekleri
-  const ilceSecenekleri = useMemo(
-    () =>
-      [...new Set(mesai.aylik.flatMap((a) => a.ilceler.map((i) => i.ilce)))].sort((a, b) =>
-        a.localeCompare(b, "tr-TR")
-      ),
-    [mesai.aylik]
-  );
+  const turLabel = MESAI_TUR_SEC.find((t) => t.id === mesaiTur)?.label ?? "Genel toplam";
 
   const selectCls =
     "rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100";
 
+  const btnChip =
+    "rounded-lg border px-3 py-1.5 text-xs font-medium transition dark:border-zinc-600";
+  const btnChipOn =
+    "border-emerald-600 bg-emerald-600 text-white dark:border-emerald-500 dark:bg-emerald-600";
+  const btnChipOff =
+    "border-zinc-300 bg-white text-zinc-800 hover:bg-zinc-50 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800";
+
+  const ilceButonlari = ilceAggSheet ?? ilceToplamPivot.map((r) => ({
+    ilce: r.ilce,
+    tutar: r.genelToplamTutar,
+    personel: r.personelSayisi,
+  }));
+
   return (
     <div className="flex flex-col gap-6">
-      {/* Filtreler: ay üstte, ilçe altta (genel pano ile uyumlu) */}
-      <div className="flex flex-col gap-3">
-        <div className="flex flex-col gap-2">
+      <div className="rounded-lg border border-amber-200 bg-amber-50/80 px-3 py-2 text-xs text-amber-950 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100">
+        <strong>Ay</strong> ve <strong>yıl</strong> üstteki genel pano filtrelerindedir (
+        {monthIndex === -1 ? "Tümü (yıllık)" : months[monthIndex] ?? "—"} · {selectedYear}). Mesai
+        Excel verisi{" "}
+        <strong>{mesai.dataYear}</strong> yılı içindir
+        {selectedYear !== mesai.dataYear && " — seçili yıl mesai özetini göstermez"}.
+      </div>
+
+      {sheetData && sheetCols?.daire && (
+        <div className="flex flex-col gap-3 rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
+          <p className="text-xs font-medium text-zinc-600 dark:text-zinc-400">
+            DATA sayfası filtreleri
+          </p>
           <div className="flex flex-wrap gap-3">
-            <label className="flex flex-col gap-1 text-xs font-medium text-zinc-600 dark:text-zinc-400">
-              Ay
+            <label className="flex min-w-[10rem] flex-col gap-1 text-xs font-medium text-zinc-600 dark:text-zinc-400">
+              Daire başkanlığı
               <select
                 className={selectCls}
-                value={seciliAy}
-                onChange={(e) => setSeciliAy(Number(e.target.value))}
+                value={daireFiltre}
+                onChange={(e) => setDaireFiltre(e.target.value)}
               >
-                <option value={-1}>Tüm aylar</option>
-                {mesai.aylik.map((a) => (
-                  <option key={a.ay} value={a.ay}>
-                    {a.ayAd}
+                <option value="">Tümü</option>
+                {(daireSubeOpts?.daireler ?? []).map((d) => (
+                  <option key={d} value={d}>
+                    {d}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="flex min-w-[12rem] flex-col gap-1 text-xs font-medium text-zinc-600 dark:text-zinc-400">
+              Şube
+              <select
+                className={selectCls}
+                value={subeFiltre}
+                onChange={(e) => setSubeFiltre(e.target.value)}
+              >
+                <option value="">Tümü</option>
+                {subeSecenekleri.map((s) => (
+                  <option key={s} value={s}>
+                    {s}
                   </option>
                 ))}
               </select>
             </label>
           </div>
-          <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
-            Yıl: üstteki genel <strong className="text-zinc-600 dark:text-zinc-300">Yıl</strong> filtresi
-            (mesai verisi {mesai.dataYear} için geçerlidir).
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-3 border-t border-zinc-100 pt-3 dark:border-zinc-800/80">
-          <label className="flex flex-col gap-1 text-xs font-medium text-zinc-600 dark:text-zinc-400">
-            İlçe
-            <select
-              className={selectCls}
-              value={seciliIlce}
-              onChange={(e) => setSeciliIlce(e.target.value)}
-            >
-              <option value="">Tüm ilçeler</option>
-              {ilceSecenekleri.map((i) => (
-                <option key={i} value={i}>
-                  {i}
-                </option>
+          <div>
+            <p className="mb-2 text-xs font-medium text-zinc-600 dark:text-zinc-400">
+              Mesai türü (tutar sütunu)
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {MESAI_TUR_SEC.map((t) => (
+                <button
+                  key={t.id}
+                  type="button"
+                  className={`${btnChip} ${mesaiTur === t.id ? btnChipOn : btnChipOff}`}
+                  onClick={() => setMesaiTur(t.id)}
+                >
+                  {t.label}
+                </button>
               ))}
-            </select>
-          </label>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div>
+        <p className="mb-2 text-xs font-medium text-zinc-600 dark:text-zinc-400">
+          İlçe (üstteki ilçe ile aynı — tıklayınca üst filtre güncellenir)
+        </p>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            className={`${btnChip} ${!globalIlce ? btnChipOn : btnChipOff}`}
+            onClick={() => setGlobalIlce("")}
+          >
+            Tümü
+          </button>
+          {ilceButonlari.map((r) => (
+            <button
+              key={r.ilce}
+              type="button"
+              className={`${btnChip} ${globalIlce === r.ilce ? btnChipOn : btnChipOff}`}
+              title={`${nf0.format(r.tutar)} ₺`}
+              onClick={() => setGlobalIlce(globalIlce === r.ilce ? "" : r.ilce)}
+            >
+              {r.ilce}{" "}
+              <span className="tabular-nums opacity-90">({nf0.format(r.personel)})</span>
+            </button>
+          ))}
         </div>
       </div>
 
-      {/* KPI Kartları */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
         <MiniKpi
           label="Toplam mesai tutarı"
           value={`${nf0.format(toplamTutar)} ₺`}
         />
         <MiniKpi
-          label="Mesaili personel-ay sayısı"
+          label="Kayıt / personel (satır)"
           value={nf0.format(toplamPersonel)}
         />
         <MiniKpi
@@ -2064,24 +2242,30 @@ function MesaiSection({ mesai }: { mesai: DashboardPayload["mesai"] }) {
           value={kisiBasiTutar != null ? `${nf2.format(kisiBasiTutar)} ₺` : "—"}
         />
         <MiniKpi
-          label="Toplam mesai / kişi tutarı"
-          value={kisiBasiTutar != null ? `${nf2.format(kisiBasiTutar)} ₺` : "—"}
+          label="Seçilen mesai türü"
+          value={turLabel}
         />
       </div>
 
-      {/* Aylık Bar Grafiği */}
       <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
-        <h2 className="mb-4 text-base font-semibold text-zinc-900 dark:text-zinc-100">
-          Aylık Toplam Mesai Tutarı
+        <h2 className="mb-1 text-base font-semibold text-zinc-900 dark:text-zinc-100">
+          {monthIndex === -1 ? "Aylık mesai tutarı" : `${months[monthIndex]} — mesai tutarı`}
         </h2>
-        <ResponsiveContainer width="100%" height={240}>
-          <BarChart data={ayBarData} margin={chartMargin}>
+        <p className="mb-3 text-xs text-zinc-500 dark:text-zinc-400">
+          Tutarlar çubukların üstünde (koyu metin). Ayrıntı için çubuğun üzerine gelin.
+        </p>
+        <ResponsiveContainer width="100%" height={260}>
+          <BarChart data={ayBarData} margin={mesaiChartMargin}>
             <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" />
             <XAxis
               dataKey="ay"
-              tick={{ fill: "var(--chart-tick)", fontSize: 11 }}
+              tick={{ fill: "var(--chart-tick)", fontSize: 10 }}
               axisLine={false}
               tickLine={false}
+              interval={0}
+              angle={monthIndex === -1 ? -35 : 0}
+              textAnchor={monthIndex === -1 ? "end" : "middle"}
+              height={monthIndex === -1 ? 52 : 28}
             />
             <YAxis
               tickFormatter={formatYAxisTl}
@@ -2091,11 +2275,13 @@ function MesaiSection({ mesai }: { mesai: DashboardPayload["mesai"] }) {
               width={yAxisWidth}
             />
             <Tooltip
-              formatter={(v: unknown) =>
-                typeof v === "number"
-                  ? [`${nf0.format(v)} ₺`, "Mesai Tutarı"]
-                  : [String(v), ""]
-              }
+              formatter={(v: unknown, name) => {
+                if (typeof v !== "number") return [String(v), ""];
+                const n = String(name ?? "");
+                return n === "personel"
+                  ? [nf0.format(v), "Kayıt sayısı"]
+                  : [`${nf0.format(v)} ₺`, "Tutar"];
+              }}
               contentStyle={{
                 background: "var(--tooltip-bg)",
                 border: "1px solid var(--tooltip-border)",
@@ -2103,17 +2289,35 @@ function MesaiSection({ mesai }: { mesai: DashboardPayload["mesai"] }) {
                 fontSize: 13,
               }}
             />
-            <Bar dataKey="tutar" name="Mesai Tutarı" fill="#6366f1" radius={[4, 4, 0, 0]} />
+            <Bar dataKey="tutar" name="Tutar" fill="#6366f1" radius={[4, 4, 0, 0]}>
+              <LabelList
+                dataKey="tutar"
+                position="top"
+                formatter={(v: unknown) =>
+                  typeof v === "number" && v > 0 ? nf0.format(v) : ""
+                }
+                className="fill-zinc-800 dark:fill-zinc-100"
+                style={{ fontSize: 10, fontWeight: 600 }}
+              />
+            </Bar>
           </BarChart>
         </ResponsiveContainer>
       </div>
 
-      {/* İlçe Tablosu */}
       <div className="rounded-xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
-        <h2 className="px-4 pt-4 pb-3 text-base font-semibold text-zinc-900 dark:text-zinc-100">
-          İlçe Bazlı Mesai Özeti
+        <h2 className="px-4 pt-4 pb-1 text-base font-semibold text-zinc-900 dark:text-zinc-100">
+          İlçe bazlı özet
         </h2>
-        <MesaiIlceTable rows={ilceToplam} />
+        <p className="px-4 pb-3 text-xs text-zinc-500 dark:text-zinc-400">
+          {ilceAggSheet
+            ? `DATA + «${turLabel}» sütunu — detaylı kırılım için pivot tabloya bakın.`
+            : "Aylık pivot sayfalarından (Excel)."}
+        </p>
+        {ilceAggSheet ? (
+          <MesaiIlceBasitTable rows={ilceAggSheet} turLabel={turLabel} />
+        ) : (
+          <MesaiIlceTable rows={ilceToplam} />
+        )}
       </div>
 
       {(mesai.dataSheet?.rows?.length || mesai.dataSheetUrl) && (
@@ -2124,11 +2328,10 @@ function MesaiSection({ mesai }: { mesai: DashboardPayload["mesai"] }) {
           <p className="px-4 pb-3 text-xs text-zinc-500 dark:text-zinc-400">
             Excel «DATA» sayfasındaki tüm sütunlar. Çok satır olduğu için arama ve sayfalama kullanın.
           </p>
-          <MesaiDataSheetBlock mesai={mesai} />
+          <MesaiDataSheetBlock mesai={mesai} prefetched={sheetData} />
         </div>
       )}
 
-      {/* Top 10 Şube */}
       {mesai.top10Sube.length > 0 && (
         <div className="rounded-xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
           <h2 className="px-4 pt-4 pb-3 text-base font-semibold text-zinc-900 dark:text-zinc-100">
@@ -2145,18 +2348,94 @@ function MesaiSection({ mesai }: { mesai: DashboardPayload["mesai"] }) {
   );
 }
 
+function MesaiIlceBasitTable({
+  rows,
+  turLabel,
+}: {
+  rows: { ilce: string; tutar: number; personel: number }[];
+  turLabel: string;
+}) {
+  const nf0 = new Intl.NumberFormat("tr-TR", { maximumFractionDigits: 0 });
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full min-w-[420px] border-collapse text-left text-sm">
+        <thead>
+          <tr className="border-b border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900/80">
+            <th className="px-3 py-2 font-semibold text-zinc-700 dark:text-zinc-300">İlçe</th>
+            <th className="px-3 py-2 text-right font-semibold text-zinc-700 dark:text-zinc-300">
+              Kayıt
+            </th>
+            <th className="px-3 py-2 text-right font-semibold text-zinc-700 dark:text-zinc-300">
+              {turLabel} (₺)
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.length === 0 ? (
+            <tr>
+              <td colSpan={3} className="px-3 py-6 text-center text-sm text-zinc-500">
+                Veri yok.
+              </td>
+            </tr>
+          ) : (
+            rows.map((r) => (
+              <tr
+                key={r.ilce}
+                className="border-b border-zinc-100 hover:bg-zinc-50/80 dark:border-zinc-800/80 dark:hover:bg-zinc-900/50"
+              >
+                <td className="px-3 py-2 font-medium text-zinc-900 dark:text-zinc-100">{r.ilce}</td>
+                <td className="px-3 py-2 text-right tabular-nums text-zinc-800 dark:text-zinc-200">
+                  {nf0.format(r.personel)}
+                </td>
+                <td className="px-3 py-2 text-right tabular-nums font-semibold text-zinc-900 dark:text-zinc-100">
+                  {nf0.format(r.tutar)} ₺
+                </td>
+              </tr>
+            ))
+          )}
+        </tbody>
+        {rows.length > 0 && (
+          <tfoot>
+            <tr className="border-t-2 border-zinc-300 bg-zinc-100 font-semibold dark:border-zinc-700 dark:bg-zinc-900">
+              <td className="px-3 py-2 text-zinc-900 dark:text-zinc-100">TOPLAM</td>
+              <td className="px-3 py-2 text-right tabular-nums text-zinc-900 dark:text-zinc-100">
+                {nf0.format(rows.reduce((s, r) => s + r.personel, 0))}
+              </td>
+              <td className="px-3 py-2 text-right tabular-nums text-zinc-900 dark:text-zinc-100">
+                {nf0.format(rows.reduce((s, r) => s + r.tutar, 0))} ₺
+              </td>
+            </tr>
+          </tfoot>
+        )}
+      </table>
+    </div>
+  );
+}
+
 function MesaiDataSheetBlock({
   mesai,
+  prefetched,
 }: {
   mesai: NonNullable<DashboardPayload["mesai"]>;
+  /** Mesai sekmesi zaten DATA yüklediyse tekrar istek atma */
+  prefetched?: MesaiDataSheet | null;
 }) {
   const hasInline = mesai.dataSheet && mesai.dataSheet.rows.length > 0;
   const url = mesai.dataSheetUrl;
-  const [fetched, setFetched] = useState<MesaiDataSheet | null>(null);
+  const [fetched, setFetched] = useState<MesaiDataSheet | null>(
+    () => prefetched?.rows?.length ? prefetched : null
+  );
   const [loadErr, setLoadErr] = useState<string | null>(null);
 
   useEffect(() => {
-    if (hasInline || !url) return;
+    if (prefetched?.rows?.length) {
+      setFetched(prefetched);
+      return;
+    }
+  }, [prefetched]);
+
+  useEffect(() => {
+    if (hasInline || prefetched?.rows?.length || !url) return;
     let cancel = false;
     fetch(url)
       .then((r) => {
@@ -2172,9 +2451,13 @@ function MesaiDataSheetBlock({
     return () => {
       cancel = true;
     };
-  }, [hasInline, url]);
+  }, [hasInline, url, prefetched]);
 
-  const data = hasInline ? mesai.dataSheet! : fetched;
+  const data = hasInline
+    ? mesai.dataSheet!
+    : prefetched?.rows?.length
+      ? prefetched
+      : fetched;
 
   if (!data) {
     return (
