@@ -26,6 +26,17 @@ function normCol(s: string) {
   return s.replace(/\s+/g, " ").trim().toLocaleUpperCase("tr-TR");
 }
 
+/** Türkçe İ/I ve benzeri farkları kaldırır (sütun adı eşlemesi için) */
+function foldTrAscii(s: string): string {
+  return normCol(s)
+    .replace(/İ/g, "I")
+    .replace(/Ş/g, "S")
+    .replace(/Ğ/g, "G")
+    .replace(/Ü/g, "U")
+    .replace(/Ö/g, "O")
+    .replace(/Ç/g, "C");
+}
+
 function cellNum(v: unknown): number {
   if (typeof v === "number" && Number.isFinite(v)) return v;
   if (typeof v === "string" && v.trim()) {
@@ -70,11 +81,13 @@ export function resolveTutarColumn(
   columns: string[]
 ): string | null {
   const n = (c: string) => normCol(c);
+  const f = (c: string) => foldTrAscii(c);
   switch (tur) {
     case "genel":
       return (
         columns.find((c) => n(c).includes("GENEL TOPLAM MESA") && n(c).includes("TUTAR")) ??
         columns.find((c) => n(c).includes("GENEL TOPLAM") && n(c).includes("TUTAR")) ??
+        columns.find((c) => f(c).includes("GENEL TOPLAM") && f(c).includes("MESA") && f(c).includes("TUTAR")) ??
         null
       );
     case "fazla":
@@ -84,15 +97,35 @@ export function resolveTutarColumn(
             n(c).includes("FAZLA") &&
             n(c).includes("TUTAR") &&
             !n(c).includes("TOPLAM FAZLA")
-        ) ?? null
+        ) ??
+        columns.find(
+          (c) =>
+            f(c).includes("FAZLA") &&
+            f(c).includes("TUTAR") &&
+            !f(c).includes("TOPLAM FAZLA")
+        ) ??
+        null
       );
     case "cumartesi":
-      return columns.find((c) => n(c).includes("CUMARTESI") && n(c).includes("TUTAR")) ?? null;
+      return (
+        columns.find((c) => n(c).includes("CUMARTESI") && n(c).includes("TUTAR")) ??
+        columns.find((c) => f(c).includes("CUMARTES") && f(c).includes("TUTAR")) ??
+        null
+      );
     case "haftatatil":
-      return columns.find((c) => n(c).includes("HAFTATATIL") && n(c).includes("TUTAR")) ?? null;
+      return (
+        columns.find((c) => n(c).includes("HAFTATATIL") && n(c).includes("TUTAR")) ??
+        columns.find((c) => f(c).includes("HAFTATATIL") && f(c).includes("TUTAR")) ??
+        columns.find(
+          (c) => f(c).includes("HAFTA") && f(c).includes("TATIL") && f(c).includes("TUTAR")
+        ) ??
+        null
+      );
     case "bayram":
       return (
-        columns.find((c) => n(c).includes("BAYRAM") && n(c).includes("TUTAR")) ?? null
+        columns.find((c) => n(c).includes("BAYRAM") && n(c).includes("TUTAR")) ??
+        columns.find((c) => f(c).includes("BAYRAM") && f(c).includes("TUTAR")) ??
+        null
       );
     default:
       return null;
@@ -120,13 +153,19 @@ export function filterMesaiDataSheetRows(
   sheet: MesaiDataSheet,
   filters: MesaiSheetFilters,
   monthIndex: number,
-  mesaiTur: MesaiTurFiltre
+  mesaiTur: MesaiTurFiltre,
+  /** Veri.xlsx ilçe listesi — Excel’de yanlış «ilçe» (ör. Hukuk müş.) satırlarını ele */
+  allowedIlceUpper?: Set<string> | null
 ): Record<string, string | number | null>[] {
   const cols = resolveMesaiSheetColumns(sheet.columns);
   const tutarKey = resolveTutarColumn(mesaiTur, sheet.columns);
   const wantPositiveTutar = mesaiTur !== "genel" && tutarKey != null;
 
   return sheet.rows.filter((row) => {
+    if (cols.ilce && allowedIlceUpper && allowedIlceUpper.size > 0) {
+      const il0 = String(row[cols.ilce] ?? "").trim().toLocaleUpperCase("tr-TR");
+      if (!allowedIlceUpper.has(il0)) return false;
+    }
     if (cols.daire && filters.daire) {
       const d = String(row[cols.daire] ?? "").trim();
       if (d !== filters.daire) return false;
@@ -154,7 +193,8 @@ export function filterMesaiDataSheetRows(
 export function aggregateMesaiByIlce(
   sheet: MesaiDataSheet,
   cols: MesaiSheetCols & { tutarKey: string },
-  filters: MesaiSheetFilters
+  filters: MesaiSheetFilters,
+  allowedIlceUpper?: Set<string> | null
 ): { ilce: string; tutar: number; personel: number }[] {
   const ilceKey = cols.ilce;
   if (!ilceKey || !cols.tutarKey) return [];
@@ -164,6 +204,7 @@ export function aggregateMesaiByIlce(
     const s = cols.sube ? String(row[cols.sube] ?? "").trim() : "";
     const il = String(row[ilceKey] ?? "").trim().toLocaleUpperCase("tr-TR");
     if (!il) continue;
+    if (allowedIlceUpper && allowedIlceUpper.size > 0 && !allowedIlceUpper.has(il)) continue;
     if (filters.daire && d !== filters.daire) continue;
     if (filters.sube && s !== filters.sube) continue;
     if (filters.ilce && il !== filters.ilce.toLocaleUpperCase("tr-TR")) continue;
@@ -185,7 +226,8 @@ export function aggregateMesaiByAy(
   monthLabels: string[],
   filters: MesaiSheetFilters,
   /** Üst aydan: yalnızca bu ay (null = 12 ay) */
-  onlyAyIndex: number | null = null
+  onlyAyIndex: number | null = null,
+  allowedIlceUpper?: Set<string> | null
 ): { ay: string; tutar: number; personel: number }[] {
   const donemKey = cols.donem;
   const ilceKey = cols.ilce;
@@ -201,6 +243,9 @@ export function aggregateMesaiByAy(
     const il = ilceKey
       ? String(row[ilceKey] ?? "").trim().toLocaleUpperCase("tr-TR")
       : "";
+    if (allowedIlceUpper && allowedIlceUpper.size > 0 && ilceKey) {
+      if (!il || !allowedIlceUpper.has(il)) continue;
+    }
     if (filters.daire && d !== filters.daire) continue;
     if (filters.sube && s !== filters.sube) continue;
     if (filters.ilce && il !== filters.ilce.toLocaleUpperCase("tr-TR")) continue;

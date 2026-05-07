@@ -1812,6 +1812,7 @@ export default function Dashboard({ data }: Props) {
                   selectedYear={selectedYear}
                   dataYear={dataYear}
                   months={data.months}
+                  veriIlceler={data.ilceler}
                   globalIlce={ilce}
                   setGlobalIlce={setIlce}
                 />
@@ -1959,6 +1960,7 @@ function MesaiSection({
   selectedYear,
   dataYear,
   months,
+  veriIlceler,
   globalIlce,
   setGlobalIlce,
 }: {
@@ -1967,6 +1969,8 @@ function MesaiSection({
   selectedYear: number;
   dataYear: number;
   months: string[];
+  /** Su panosu ilçe listesi — mesai DATA’da yanlış yazılmış «ilçe» satırlarını ele */
+  veriIlceler: string[];
   globalIlce: string;
   setGlobalIlce: (s: string) => void;
 }) {
@@ -2004,6 +2008,17 @@ function MesaiSection({
   useEffect(() => {
     setSubeFiltre("");
   }, [daireFiltre]);
+
+  const officialIlceUpper = useMemo(
+    () => new Set(veriIlceler.map((i) => i.trim().toLocaleUpperCase("tr-TR"))),
+    [veriIlceler]
+  );
+
+  useEffect(() => {
+    if (!globalIlce.trim()) return;
+    const u = globalIlce.trim().toLocaleUpperCase("tr-TR");
+    if (!officialIlceUpper.has(u)) setGlobalIlce("");
+  }, [globalIlce, officialIlceUpper, setGlobalIlce]);
 
   const sheetCols = useMemo(
     () => (sheetData ? resolveMesaiSheetColumns(sheetData.columns) : null),
@@ -2068,13 +2083,20 @@ function MesaiSection({
         acc.get(s.ilce)!.ayCount += 1;
       }
     }
-    return [...acc.values()].sort((a, b) => b.genelToplamTutar - a.genelToplamTutar);
-  }, [filtreliAylik, globalIlce]);
+    return [...acc.values()]
+      .filter((r) => officialIlceUpper.has(r.ilce.trim().toLocaleUpperCase("tr-TR")))
+      .sort((a, b) => b.genelToplamTutar - a.genelToplamTutar);
+  }, [filtreliAylik, globalIlce, officialIlceUpper]);
 
   const ilceAggSheet = useMemo(() => {
     if (!sheetData || !sheetCols?.ilce || !tutarKey) return null;
-    return aggregateMesaiByIlce(sheetData, { ...sheetCols, tutarKey }, sheetFilters);
-  }, [sheetData, sheetCols, tutarKey, sheetFilters]);
+    return aggregateMesaiByIlce(
+      sheetData,
+      { ...sheetCols, tutarKey },
+      sheetFilters,
+      officialIlceUpper
+    );
+  }, [sheetData, sheetCols, tutarKey, sheetFilters, officialIlceUpper]);
 
   const ayBarData = useMemo(() => {
     if (sheetData && sheetCols?.donem && tutarKey) {
@@ -2083,7 +2105,8 @@ function MesaiSection({
         { ...sheetCols, tutarKey },
         months,
         sheetFilters,
-        monthIndex === -1 ? null : monthIndex
+        monthIndex === -1 ? null : monthIndex,
+        officialIlceUpper
       );
     }
     return mesai.aylik.map((a) => {
@@ -2094,7 +2117,17 @@ function MesaiSection({
         personel: filtered.reduce((s, i) => s + i.personelSayisi, 0),
       };
     });
-  }, [sheetData, sheetCols, tutarKey, sheetFilters, months, monthIndex, mesai.aylik, globalIlce]);
+  }, [
+    sheetData,
+    sheetCols,
+    tutarKey,
+    sheetFilters,
+    months,
+    monthIndex,
+    mesai.aylik,
+    globalIlce,
+    officialIlceUpper,
+  ]);
 
   const ilceToplam = ilceAggSheet
     ? ilceAggSheet.map((r) => ({
@@ -2115,7 +2148,7 @@ function MesaiSection({
   const toplamTutar = ilceToplam.reduce((s, r) => s + r.genelToplamTutar, 0);
   const toplamPersonel = ilceAggSheet
     ? ilceAggSheet.reduce((s, r) => s + r.personel, 0)
-    : filtreliAylik.reduce((s, a) => s + a.personelSayisi, 0);
+    : ilceToplamPivot.reduce((s, r) => s + r.personelSayisi, 0);
   const kisiBasiTutar = toplamPersonel > 0 ? toplamTutar / toplamPersonel : null;
 
   const turLabel = MESAI_TUR_SEC.find((t) => t.id === mesaiTur)?.label ?? "Genel toplam";
@@ -2187,6 +2220,10 @@ function MesaiSection({
             <p className="mb-2 text-xs font-medium text-zinc-600 dark:text-zinc-400">
               Mesai türü (tutar sütunu)
             </p>
+            <p className="mb-2 text-[11px] text-zinc-500 dark:text-zinc-400">
+              Genel toplam dışında bir tür seçtiğinizde, alttaki personel listesinde yalnızca o
+              tutarı <strong>sıfırdan büyük</strong> olan satırlar kalır.
+            </p>
             <div className="flex flex-wrap gap-2">
               {MESAI_TUR_SEC.map((t) => (
                 <button
@@ -2205,7 +2242,8 @@ function MesaiSection({
 
       <div>
         <p className="mb-2 text-xs font-medium text-zinc-600 dark:text-zinc-400">
-          İlçe (üstteki ilçe ile aynı — tıklayınca üst filtre güncellenir)
+          İlçe (üstteki ilçe ile aynı — tıklayınca üst filtre güncellenir). Yalnızca su panosundaki
+          resmi ilçeler listelenir; Excel’de ilçe sütununa yanlış yazılmış birimler burada görünmez.
         </p>
         <div className="flex flex-wrap gap-2">
           <button
@@ -2346,6 +2384,7 @@ function MesaiSection({
             sheetFilters={sheetFilters}
             monthIndex={monthIndex}
             mesaiTur={mesaiTur}
+            allowedIlceUpper={officialIlceUpper}
           />
         </div>
       )}
@@ -2436,6 +2475,7 @@ function MesaiDataSheetBlock({
   sheetFilters,
   monthIndex,
   mesaiTur,
+  allowedIlceUpper,
 }: {
   mesai: NonNullable<DashboardPayload["mesai"]>;
   /** Mesai sekmesi zaten DATA yüklediyse tekrar istek atma */
@@ -2444,6 +2484,7 @@ function MesaiDataSheetBlock({
   sheetFilters: MesaiSheetFilters;
   monthIndex: number;
   mesaiTur: MesaiTurFiltre;
+  allowedIlceUpper: Set<string>;
 }) {
   const hasInline = mesai.dataSheet && mesai.dataSheet.rows.length > 0;
   const url = mesai.dataSheetUrl;
@@ -2486,8 +2527,14 @@ function MesaiDataSheetBlock({
 
   const filteredRows = useMemo(() => {
     if (!data) return [];
-    return filterMesaiDataSheetRows(data, sheetFilters, monthIndex, mesaiTur);
-  }, [data, sheetFilters, monthIndex, mesaiTur]);
+    return filterMesaiDataSheetRows(
+      data,
+      sheetFilters,
+      monthIndex,
+      mesaiTur,
+      allowedIlceUpper
+    );
+  }, [data, sheetFilters, monthIndex, mesaiTur, allowedIlceUpper]);
 
   const tableData = useMemo((): MesaiDataSheet | null => {
     if (!data) return null;
