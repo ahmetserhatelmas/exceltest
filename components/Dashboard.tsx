@@ -2283,11 +2283,20 @@ function MesaiSection({
                   : [`${nf0.format(v)} ₺`, "Tutar"];
               }}
               contentStyle={{
-                background: "var(--tooltip-bg)",
-                border: "1px solid var(--tooltip-border)",
                 borderRadius: 8,
                 fontSize: 13,
+                background: "var(--background)",
+                border: "1px solid var(--chart-tooltip-border)",
+                color: "var(--foreground)",
               }}
+              labelStyle={{
+                color: "var(--foreground)",
+                fontWeight: 600,
+              }}
+              itemStyle={{
+                color: "var(--foreground)",
+              }}
+              cursor={{ fill: "rgba(148, 163, 184, 0.14)" }}
             />
             <Bar dataKey="tutar" name="Tutar" fill="#6366f1" radius={[4, 4, 0, 0]}>
               <LabelList
