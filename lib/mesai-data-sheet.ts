@@ -112,6 +112,44 @@ export type MesaiSheetFilters = {
   ilce: string;
 };
 
+/**
+ * Üstteki daire / şube / ilçe / ay / mesai türü ile DATA personel satırlarını süz.
+ * `monthIndex === -1` → aya göre süzme yok. `mesaiTur !== genel` → seçilen tutar sütunu > 0.
+ */
+export function filterMesaiDataSheetRows(
+  sheet: MesaiDataSheet,
+  filters: MesaiSheetFilters,
+  monthIndex: number,
+  mesaiTur: MesaiTurFiltre
+): Record<string, string | number | null>[] {
+  const cols = resolveMesaiSheetColumns(sheet.columns);
+  const tutarKey = resolveTutarColumn(mesaiTur, sheet.columns);
+  const wantPositiveTutar = mesaiTur !== "genel" && tutarKey != null;
+
+  return sheet.rows.filter((row) => {
+    if (cols.daire && filters.daire) {
+      const d = String(row[cols.daire] ?? "").trim();
+      if (d !== filters.daire) return false;
+    }
+    if (cols.sube && filters.sube) {
+      const s = String(row[cols.sube] ?? "").trim();
+      if (s !== filters.sube) return false;
+    }
+    if (cols.ilce && filters.ilce) {
+      const il = String(row[cols.ilce] ?? "").trim().toLocaleUpperCase("tr-TR");
+      if (il !== filters.ilce.trim().toLocaleUpperCase("tr-TR")) return false;
+    }
+    if (cols.donem && monthIndex >= 0 && monthIndex <= 11) {
+      const ai = maasDonemAyIndeks(row[cols.donem]);
+      if (ai !== monthIndex) return false;
+    }
+    if (wantPositiveTutar && tutarKey) {
+      if (cellNum(row[tutarKey]) <= 0) return false;
+    }
+    return true;
+  });
+}
+
 /** Filtrelenmiş satırlardan ilçe → tutar + personel (satır sayısı) */
 export function aggregateMesaiByIlce(
   sheet: MesaiDataSheet,

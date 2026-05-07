@@ -25,8 +25,10 @@ import {
   aggregateMesaiByAy,
   aggregateMesaiByIlce,
   collectDaireSubeOptions,
+  filterMesaiDataSheetRows,
   resolveMesaiSheetColumns,
   resolveTutarColumn,
+  type MesaiSheetFilters,
   type MesaiTurFiltre,
 } from "@/lib/mesai-data-sheet";
 
@@ -2335,9 +2337,16 @@ function MesaiSection({
             DATA — Personel mesai detayı
           </h2>
           <p className="px-4 pb-3 text-xs text-zinc-500 dark:text-zinc-400">
-            Excel «DATA» sayfasındaki tüm sütunlar. Çok satır olduğu için arama ve sayfalama kullanın.
+            Excel «DATA» sayfasındaki tüm sütunlar. Üstteki daire, şube, ilçe, genel ay ve mesai türü
+            bu listeyi süzer; çok satır olduğu için arama ve sayfalama kullanın.
           </p>
-          <MesaiDataSheetBlock mesai={mesai} prefetched={sheetData} />
+          <MesaiDataSheetBlock
+            mesai={mesai}
+            prefetched={sheetData}
+            sheetFilters={sheetFilters}
+            monthIndex={monthIndex}
+            mesaiTur={mesaiTur}
+          />
         </div>
       )}
 
@@ -2424,10 +2433,17 @@ function MesaiIlceBasitTable({
 function MesaiDataSheetBlock({
   mesai,
   prefetched,
+  sheetFilters,
+  monthIndex,
+  mesaiTur,
 }: {
   mesai: NonNullable<DashboardPayload["mesai"]>;
   /** Mesai sekmesi zaten DATA yüklediyse tekrar istek atma */
   prefetched?: MesaiDataSheet | null;
+  /** Üstteki DATA filtreleri — personel tablosuna uygulanır */
+  sheetFilters: MesaiSheetFilters;
+  monthIndex: number;
+  mesaiTur: MesaiTurFiltre;
 }) {
   const hasInline = mesai.dataSheet && mesai.dataSheet.rows.length > 0;
   const url = mesai.dataSheetUrl;
@@ -2468,7 +2484,17 @@ function MesaiDataSheetBlock({
       ? prefetched
       : fetched;
 
-  if (!data) {
+  const filteredRows = useMemo(() => {
+    if (!data) return [];
+    return filterMesaiDataSheetRows(data, sheetFilters, monthIndex, mesaiTur);
+  }, [data, sheetFilters, monthIndex, mesaiTur]);
+
+  const tableData = useMemo((): MesaiDataSheet | null => {
+    if (!data) return null;
+    return { ...data, rows: filteredRows };
+  }, [data, filteredRows]);
+
+  if (!data || !tableData) {
     return (
       <div className="px-4 pb-6 text-sm text-zinc-600 dark:text-zinc-400">
         {loadErr ? (
@@ -2486,7 +2512,23 @@ function MesaiDataSheetBlock({
     );
   }
 
-  return <MesaiDataSheetTable data={data} />;
+  const totalInFile = data.rows.length;
+
+  return (
+    <div className="flex flex-col gap-2">
+      <p className="px-4 text-xs text-zinc-600 dark:text-zinc-400">
+        Üst filtreler sonrası{" "}
+        <strong className="tabular-nums text-zinc-800 dark:text-zinc-200">
+          {filteredRows.length.toLocaleString("tr-TR")}
+        </strong>{" "}
+        / {totalInFile.toLocaleString("tr-TR")} satır
+        {monthIndex >= 0 && monthIndex <= 11 && (
+          <span className="text-zinc-500"> · Maaş dönemi ayı üstteki ay ile eşleşen kayıtlar</span>
+        )}
+      </p>
+      <MesaiDataSheetTable data={tableData} />
+    </div>
+  );
 }
 
 function MesaiDataSheetTable({ data }: { data: MesaiDataSheet }) {
@@ -2521,7 +2563,7 @@ function MesaiDataSheetTable({ data }: { data: MesaiDataSheet }) {
 
   useEffect(() => {
     setPage(0);
-  }, [q]);
+  }, [q, data.rows.length]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const currentPage = Math.min(page, totalPages - 1);
