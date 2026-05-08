@@ -2010,10 +2010,21 @@ function MesaiSection({
     setSubeFiltre("");
   }, [daireFiltre]);
 
-  const officialIlceUpper = useMemo(
-    () => new Set(veriIlceler.map((i) => i.trim().toLocaleUpperCase("tr-TR"))),
-    [veriIlceler]
-  );
+  const officialIlceUpper = useMemo(() => {
+    const set = new Set(veriIlceler.map((i) => i.trim().toLocaleUpperCase("tr-TR")));
+    if (sheetData) {
+      const ilceColName = sheetData.columns.find(
+        (c) => c.replace(/\s+/g, " ").trim().toLocaleUpperCase("tr-TR") === "İLÇE"
+      );
+      if (ilceColName) {
+        for (const row of sheetData.rows) {
+          const v = String(row[ilceColName] ?? "").trim().toLocaleUpperCase("tr-TR");
+          if (v) set.add(v);
+        }
+      }
+    }
+    return set;
+  }, [veriIlceler, sheetData]);
 
   useEffect(() => {
     if (!globalIlce.trim()) return;

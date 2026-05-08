@@ -879,6 +879,23 @@ function readMesai(wb, sourceFileLabel, dataYear = DATA_YEAR) {
     top10Sube.push(...sorted.slice(0, 10));
   }
 
+  // Collect unique İLÇE values from DATA sheet (column index 8)
+  const dataIlcelerSet = new Set();
+  if (wb.SheetNames.includes("DATA")) {
+    const dataHeader = readRows(wb, "DATA")[0] ?? [];
+    const ilceColIdx = dataHeader.findIndex(
+      (c) => textCell(c).replace(/\s+/g, " ").trim().toLocaleUpperCase("tr-TR") === "İLÇE"
+    );
+    const colIdx = ilceColIdx >= 0 ? ilceColIdx : 8;
+    const allDataRows = readRows(wb, "DATA");
+    for (let i = 1; i < allDataRows.length; i++) {
+      const r = allDataRows[i];
+      if (!r) continue;
+      const v = textCell(r[colIdx]).trim().toLocaleUpperCase("tr-TR");
+      if (v) dataIlcelerSet.add(v);
+    }
+  }
+
   const mesaiOut = {
     sourceFile: sourceFileLabel,
     dataYear,
@@ -890,6 +907,7 @@ function readMesai(wb, sourceFileLabel, dataYear = DATA_YEAR) {
     },
     top10Sube,
     aylik,
+    dataIlceler: [...dataIlcelerSet].sort((a, b) => a.localeCompare(b, "tr-TR")),
   };
 
   if (dataSheet && dataSheet.rows.length) {
@@ -985,7 +1003,15 @@ function main() {
     altyapiMap
   );
 
-  if (mesaiPayload) filterMesaiIlcelerToVeriList(mesaiPayload, ilceler);
+  if (mesaiPayload) {
+    // Extend the veri ilçe list with ilçes actually present in the DATA sheet
+    // (e.g. MERKEZ), so they are not incorrectly filtered out.
+    const extendedIlceler = [
+      ...ilceler,
+      ...(mesaiPayload.dataIlceler ?? []),
+    ];
+    filterMesaiIlcelerToVeriList(mesaiPayload, extendedIlceler);
+  }
 
   const elektrikDetay = [
     readElektrikSheetSummary(
