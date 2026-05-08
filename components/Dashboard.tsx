@@ -26,6 +26,7 @@ import {
   aggregateMesaiByIlce,
   collectDaireSubeOptions,
   filterMesaiDataSheetRows,
+  normalizeIlceAgainstAllowlist,
   resolveMesaiSheetColumns,
   resolveTutarColumn,
   type MesaiSheetFilters,
@@ -2084,7 +2085,9 @@ function MesaiSection({
       }
     }
     return [...acc.values()]
-      .filter((r) => officialIlceUpper.has(r.ilce.trim().toLocaleUpperCase("tr-TR")))
+      .filter(
+        (r) => normalizeIlceAgainstAllowlist(r.ilce, officialIlceUpper) != null
+      )
       .sort((a, b) => b.genelToplamTutar - a.genelToplamTutar);
   }, [filtreliAylik, globalIlce, officialIlceUpper]);
 
@@ -2094,9 +2097,19 @@ function MesaiSection({
       sheetData,
       { ...sheetCols, tutarKey },
       sheetFilters,
-      officialIlceUpper
+      officialIlceUpper,
+      monthIndex,
+      mesaiTur
     );
-  }, [sheetData, sheetCols, tutarKey, sheetFilters, officialIlceUpper]);
+  }, [
+    sheetData,
+    sheetCols,
+    tutarKey,
+    sheetFilters,
+    officialIlceUpper,
+    monthIndex,
+    mesaiTur,
+  ]);
 
   const ayBarData = useMemo(() => {
     if (sheetData && sheetCols?.donem && tutarKey) {
@@ -2106,7 +2119,8 @@ function MesaiSection({
         months,
         sheetFilters,
         monthIndex === -1 ? null : monthIndex,
-        officialIlceUpper
+        officialIlceUpper,
+        mesaiTur
       );
     }
     return mesai.aylik.map((a) => {
@@ -2127,6 +2141,7 @@ function MesaiSection({
     mesai.aylik,
     globalIlce,
     officialIlceUpper,
+    mesaiTur,
   ]);
 
   const ilceToplam = ilceAggSheet
@@ -2359,7 +2374,7 @@ function MesaiSection({
         </h2>
         <p className="px-4 pb-3 text-xs text-zinc-500 dark:text-zinc-400">
           {ilceAggSheet
-            ? `DATA + «${turLabel}» sütunu — detaylı kırılım için pivot tabloya bakın.`
+            ? `DATA + «${turLabel}» sütunu — üstteki ay (${monthIndex === -1 ? "tümü" : months[monthIndex]}) ve mesai türü ile alttaki personel listesi aynı satırları sayar.`
             : "Aylık pivot sayfalarından (Excel)."}
         </p>
         {ilceAggSheet ? (
@@ -2636,10 +2651,19 @@ function MesaiDataSheetTable({ data }: { data: MesaiDataSheet }) {
             autoComplete="off"
           />
         </label>
-        <p className="text-xs text-zinc-500 dark:text-zinc-400">
-          {filtered.length.toLocaleString("tr-TR")} / {data.rows.length.toLocaleString("tr-TR")}{" "}
-          satır
-        </p>
+        <div className="text-xs text-zinc-500 dark:text-zinc-400">
+          <p>
+            {q.trim()
+              ? `Arama sonrası ${filtered.length.toLocaleString("tr-TR")} satır (havuz ${data.rows.length.toLocaleString("tr-TR")}).`
+              : `Liste ${data.rows.length.toLocaleString("tr-TR")} satır.`}
+          </p>
+          {filtered.length > pageSize ? (
+            <p className="mt-1 text-[11px] text-zinc-400">
+              Tablo sayfalıdır — bu sayfada en fazla {pageSize} satır görünür; toplam{" "}
+              {filtered.length.toLocaleString("tr-TR")} kayıt için sayfa seçin.
+            </p>
+          ) : null}
+        </div>
       </div>
 
       <div className="max-h-[min(70vh,720px)] overflow-auto rounded-lg border border-zinc-200 dark:border-zinc-700">

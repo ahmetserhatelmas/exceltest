@@ -37,6 +37,26 @@ function foldTrAscii(s: string): string {
     .replace(/Ç/g, "C");
 }
 
+/**
+ * Excel İLÇE hücresini Veri.xlsx ilçe listesiyle eşler (MERKEZ / MERKEZ İLÇESİ vb.).
+ */
+export function normalizeIlceAgainstAllowlist(
+  raw: string,
+  allowedUpper: Set<string>
+): string | null {
+  const t = raw.trim();
+  if (!t) return null;
+  let u = t.toLocaleUpperCase("tr-TR");
+  if (allowedUpper.has(u)) return u;
+  const stripped = u
+    .replace(/\s+İLÇESİ\s*$/iu, "")
+    .replace(/\s+İLÇE\s*$/iu, "")
+    .trim()
+    .toLocaleUpperCase("tr-TR");
+  if (stripped && allowedUpper.has(stripped)) return stripped;
+  return null;
+}
+
 function cellNum(v: unknown): number {
   if (typeof v === "number" && Number.isFinite(v)) return v;
   if (typeof v === "string" && v.trim()) {
@@ -162,9 +182,20 @@ export function filterMesaiDataSheetRows(
   const wantPositiveTutar = mesaiTur !== "genel" && tutarKey != null;
 
   return sheet.rows.filter((row) => {
-    if (cols.ilce && allowedIlceUpper && allowedIlceUpper.size > 0) {
-      const il0 = String(row[cols.ilce] ?? "").trim().toLocaleUpperCase("tr-TR");
-      if (!allowedIlceUpper.has(il0)) return false;
+    if (cols.ilce) {
+      const raw = String(row[cols.ilce] ?? "");
+      let canon: string;
+      if (allowedIlceUpper && allowedIlceUpper.size > 0) {
+        const n = normalizeIlceAgainstAllowlist(raw, allowedIlceUpper);
+        if (n == null) return false;
+        canon = n;
+      } else {
+        canon = raw.trim().toLocaleUpperCase("tr-TR");
+        if (!canon) return false;
+      }
+      if (filters.ilce && canon !== filters.ilce.trim().toLocaleUpperCase("tr-TR")) {
+        return false;
+      }
     }
     if (cols.daire && filters.daire) {
       const d = String(row[cols.daire] ?? "").trim();
@@ -173,10 +204,6 @@ export function filterMesaiDataSheetRows(
     if (cols.sube && filters.sube) {
       const s = String(row[cols.sube] ?? "").trim();
       if (s !== filters.sube) return false;
-    }
-    if (cols.ilce && filters.ilce) {
-      const il = String(row[cols.ilce] ?? "").trim().toLocaleUpperCase("tr-TR");
-      if (il !== filters.ilce.trim().toLocaleUpperCase("tr-TR")) return false;
     }
     if (cols.donem && monthIndex >= 0 && monthIndex <= 11) {
       const ai = maasDonemAyIndeks(row[cols.donem]);
@@ -194,23 +221,40 @@ export function aggregateMesaiByIlce(
   sheet: MesaiDataSheet,
   cols: MesaiSheetCols & { tutarKey: string },
   filters: MesaiSheetFilters,
-  allowedIlceUpper?: Set<string> | null
+  allowedIlceUpper?: Set<string> | null,
+  /** Üst şerit ayı — personel detayı ile aynı (maaş dönemi) */
+  monthIndex: number = -1,
+  mesaiTur: MesaiTurFiltre = "genel"
 ): { ilce: string; tutar: number; personel: number }[] {
   const ilceKey = cols.ilce;
+  const donemKey = cols.donem;
   if (!ilceKey || !cols.tutarKey) return [];
+  const wantPositiveTutar = mesaiTur !== "genel";
   const map = new Map<string, { tutar: number; personel: number }>();
   for (const row of sheet.rows) {
     const d = cols.daire ? String(row[cols.daire] ?? "").trim() : "";
     const s = cols.sube ? String(row[cols.sube] ?? "").trim() : "";
-    const il = String(row[ilceKey] ?? "").trim().toLocaleUpperCase("tr-TR");
-    if (!il) continue;
-    if (allowedIlceUpper && allowedIlceUpper.size > 0 && !allowedIlceUpper.has(il)) continue;
+    let ilCanon: string;
+    const rawIl = String(row[ilceKey] ?? "");
+    if (allowedIlceUpper && allowedIlceUpper.size > 0) {
+      const n = normalizeIlceAgainstAllowlist(rawIl, allowedIlceUpper);
+      if (n == null) continue;
+      ilCanon = n;
+    } else {
+      ilCanon = rawIl.trim().toLocaleUpperCase("tr-TR");
+      if (!ilCanon) continue;
+    }
     if (filters.daire && d !== filters.daire) continue;
     if (filters.sube && s !== filters.sube) continue;
-    if (filters.ilce && il !== filters.ilce.toLocaleUpperCase("tr-TR")) continue;
+    if (filters.ilce && ilCanon !== filters.ilce.trim().toLocaleUpperCase("tr-TR")) continue;
+    if (donemKey && monthIndex >= 0 && monthIndex <= 11) {
+      const ai = maasDonemAyIndeks(row[donemKey]);
+      if (ai !== monthIndex) continue;
+    }
     const t = cellNum(row[cols.tutarKey]);
-    if (!map.has(il)) map.set(il, { tutar: 0, personel: 0 });
-    const e = map.get(il)!;
+    if (wantPositiveTutar && t <= 0) continue;
+    if (!map.has(ilCanon)) map.set(ilCanon, { tutar: 0, personel: 0 });
+    const e = map.get(ilCanon)!;
     e.tutar += t;
     e.personel += 1;
   }
@@ -227,32 +271,41 @@ export function aggregateMesaiByAy(
   filters: MesaiSheetFilters,
   /** Üst aydan: yalnızca bu ay (null = 12 ay) */
   onlyAyIndex: number | null = null,
-  allowedIlceUpper?: Set<string> | null
+  allowedIlceUpper?: Set<string> | null,
+  mesaiTur: MesaiTurFiltre = "genel"
 ): { ay: string; tutar: number; personel: number }[] {
   const donemKey = cols.donem;
   const ilceKey = cols.ilce;
   if (!donemKey || !cols.tutarKey) {
     return monthLabels.map((ay) => ({ ay, tutar: 0, personel: 0 }));
   }
+  const wantPositiveTutar = mesaiTur !== "genel";
   const byAy = new Map<number, { tutar: number; personel: number }>();
   for (let i = 0; i < 12; i++) byAy.set(i, { tutar: 0, personel: 0 });
 
   for (const row of sheet.rows) {
     const d = cols.daire ? String(row[cols.daire] ?? "").trim() : "";
     const s = cols.sube ? String(row[cols.sube] ?? "").trim() : "";
-    const il = ilceKey
-      ? String(row[ilceKey] ?? "").trim().toLocaleUpperCase("tr-TR")
-      : "";
-    if (allowedIlceUpper && allowedIlceUpper.size > 0 && ilceKey) {
-      if (!il || !allowedIlceUpper.has(il)) continue;
+    let ilCanon = "";
+    if (ilceKey) {
+      const rawIl = String(row[ilceKey] ?? "");
+      if (allowedIlceUpper && allowedIlceUpper.size > 0) {
+        const n = normalizeIlceAgainstAllowlist(rawIl, allowedIlceUpper);
+        if (n == null) continue;
+        ilCanon = n;
+      } else {
+        ilCanon = rawIl.trim().toLocaleUpperCase("tr-TR");
+        if (!ilCanon) continue;
+      }
     }
     if (filters.daire && d !== filters.daire) continue;
     if (filters.sube && s !== filters.sube) continue;
-    if (filters.ilce && il !== filters.ilce.toLocaleUpperCase("tr-TR")) continue;
+    if (filters.ilce && ilCanon !== filters.ilce.trim().toLocaleUpperCase("tr-TR")) continue;
     const ai = maasDonemAyIndeks(row[donemKey]);
     if (ai == null || ai < 0 || ai > 11) continue;
     if (onlyAyIndex != null && ai !== onlyAyIndex) continue;
     const t = cellNum(row[cols.tutarKey]);
+    if (wantPositiveTutar && t <= 0) continue;
     const e = byAy.get(ai)!;
     e.tutar += t;
     e.personel += 1;
