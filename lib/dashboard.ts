@@ -161,6 +161,10 @@ export type DashboardPayload = {
   };
   /** Mesai toplam verisi (İLÇELERE GÖRE-MESAİ TOPLAM Excel'i) */
   mesai?: MesaiPayload;
+  /** 2026 okuma verisi (ayrı dosyadan; sadece NÜFUS + ABONE sayfaları) */
+  records2026?: DashboardRecord[];
+  nufusToplam2026?: number;
+  nufusIlceToplam2026?: Record<string, number>;
 };
 
 export type MesaiIlceSatiri = {
@@ -729,6 +733,201 @@ export function hatHucreTumYillarOzeti(
     isletmeYuzde: ek > 0 ? (is / ek) * 100 : null,
     yatirimYuzde: ek > 0 ? (ya / ek) * 100 : null,
   };
+}
+
+// ─── Risk skoru ─────────────────────────────────────────────────────────────
+
+export type IlceRiskScore = {
+  ilce: string;
+  /** 0–100 ağırlıklı toplam */
+  toplamRisk: number;
+  seviye: "dusuk" | "orta" | "yuksek" | "kritik";
+  okunamayanRisk: number;
+  elektrikRisk: number;
+  tahakkukDususRisk: number;
+  mesaiRisk: number;
+  giderYogunlukRisk: number;
+  /** Ağırlıklı en yüksek bileşen adı */
+  anaRiskNedeni: string;
+};
+
+function riskSeviye(score: number): IlceRiskScore["seviye"] {
+  if (score < 30) return "dusuk";
+  if (score < 60) return "orta";
+  if (score < 80) return "yuksek";
+  return "kritik";
+}
+
+function okunamayanRiskPuan(pct: number): number {
+  if (pct < 5) return 10;
+  if (pct < 10) return 30;
+  if (pct < 15) return 60;
+  if (pct < 20) return 80;
+  return 100;
+}
+
+function tahakkukDususRiskPuan(degisimPct: number): number {
+  if (degisimPct >= 5) return 10;
+  if (degisimPct >= 0) return 25;
+  if (degisimPct >= -5) return 50;
+  if (degisimPct >= -10) return 75;
+  return 100;
+}
+
+function relativeRisk(value: number, min: number, max: number): number {
+  if (max <= min) return 55;
+  return 10 + (90 * (value - min)) / (max - min);
+}
+
+/**
+ * Her ilçe için 5 bileşenli risk skoru.
+ * Ağırlıklar: Okunamayan %35, Elektrik %25, Tahakkuk Düşüşü %20, Mesai %10, Gider Yoğunluğu %10.
+ */
+export function computeIlceRiskScores(
+  records: DashboardRecord[],
+  elektrik: DashboardPayload["elektrik"],
+  mesai: DashboardPayload["mesai"],
+  mod: IlcePerformansMod
+): IlceRiskScore[] {
+  const { satirlar } = computeIlcePerformans(records, mod);
+  if (!satirlar.length) return [];
+
+  const ilceler = satirlar.map((s) => s.ilce);
+  const okunamayanByIlce = new Map(satirlar.map((s) => [s.ilce, s.okunamayanYuzde]));
+
+  // Tahakkuk toplamı ve önceki dönemle karşılaştırma
+  const curTahByIlce = new Map<string, number>();
+  const prevTahByIlce = new Map<string, number>();
+  const m3ByIlce = new Map<string, number>();
+  const tahakkukTLByIlce = new Map<string, number>();
+  for (const r of records) {
+    const il = r.ilce;
+    if (!il) continue;
+    let curTah = 0, prevTah = 0, m3 = 0, tah = 0;
+    if (mod.tur === "yillik") {
+      for (let i = 0; i < 12; i++) {
+        const c = r.monthly[i];
+        curTah += c?.tahakkuk ?? 0;
+        m3 += c?.m3 ?? 0;
+        tah += c?.tahakkuk ?? 0;
+      }
+      // yıllık: ikinci yarı vs birinci yarı karşılaştırması
+      const half1 = r.monthly.slice(0, 6).reduce((s, c) => s + (c?.tahakkuk ?? 0), 0);
+      const half2 = r.monthly.slice(6).reduce((s, c) => s + (c?.tahakkuk ?? 0), 0);
+      curTah = half2;
+      prevTah = half1;
+    } else {
+      const c = r.monthly[mod.ayIndeks];
+      curTah = c?.tahakkuk ?? 0;
+      m3 = c?.m3 ?? 0;
+      tah = c?.tahakkuk ?? 0;
+      if (mod.ayIndeks > 0) {
+        const p = r.monthly[mod.ayIndeks - 1];
+        prevTah = p?.tahakkuk ?? 0;
+      } else {
+        prevTah = curTah;
+      }
+    }
+    curTahByIlce.set(il, (curTahByIlce.get(il) ?? 0) + curTah);
+    prevTahByIlce.set(il, (prevTahByIlce.get(il) ?? 0) + prevTah);
+    m3ByIlce.set(il, (m3ByIlce.get(il) ?? 0) + m3);
+    tahakkukTLByIlce.set(il, (tahakkukTLByIlce.get(il) ?? 0) + tah);
+  }
+
+  // Elektrik TL per ilçe (ilçeDetay kullanır — tam yıllık)
+  const elektrikTLByIlce = new Map<string, number>();
+  if (elektrik?.ilceDetay) {
+    for (const e of elektrik.ilceDetay) {
+      elektrikTLByIlce.set(e.ilce, e.toplamTahakkuk);
+    }
+  }
+
+  // Elektrik yoğunluğu: elektrikTL / m3
+  const elYogByIlce = new Map<string, number>();
+  for (const il of ilceler) {
+    const elTL = elektrikTLByIlce.get(il) ?? 0;
+    const m3 = m3ByIlce.get(il) ?? 0;
+    elYogByIlce.set(il, m3 > 0 ? elTL / m3 : 0);
+  }
+  const elVals = ilceler.map((il) => elYogByIlce.get(il) ?? 0);
+  const elMin = Math.min(...elVals);
+  const elMax = Math.max(...elVals);
+
+  // Gider yoğunluğu: elektrikTL / tahakkukTL
+  const giderYogByIlce = new Map<string, number>();
+  for (const il of ilceler) {
+    const elTL = elektrikTLByIlce.get(il) ?? 0;
+    const tah = tahakkukTLByIlce.get(il) ?? 0;
+    giderYogByIlce.set(il, tah > 0 ? elTL / tah : 0);
+  }
+  const giderVals = ilceler.map((il) => giderYogByIlce.get(il) ?? 0);
+  const giderMin = Math.min(...giderVals);
+  const giderMax = Math.max(...giderVals);
+
+  // Mesai payları
+  const mesaiByIlce = new Map<string, number>();
+  let toplamMesai = 0;
+  if (mesai?.aylik) {
+    const aylar = mod.tur === "yillik" ? mesai.aylik : mesai.aylik.filter((a) => a.ay === mod.ayIndeks);
+    for (const ay of aylar) {
+      for (const il of ay.ilceler) {
+        mesaiByIlce.set(il.ilce, (mesaiByIlce.get(il.ilce) ?? 0) + il.genelToplamTutar);
+        toplamMesai += il.genelToplamTutar;
+      }
+    }
+  }
+  const mesaiVals = ilceler.map((il) => (toplamMesai > 0 ? (mesaiByIlce.get(il) ?? 0) / toplamMesai : 0));
+  const mesaiMin = Math.min(...mesaiVals);
+  const mesaiMax = Math.max(...mesaiVals);
+
+  return ilceler
+    .map((ilce, idx) => {
+      const okYuzde = okunamayanByIlce.get(ilce) ?? 0;
+      const okunamayanRisk = okunamayanRiskPuan(okYuzde);
+
+      const elYog = elYogByIlce.get(ilce) ?? 0;
+      const elektrikRisk = elVals.length > 1 ? relativeRisk(elYog, elMin, elMax) : 50;
+
+      const curTah = curTahByIlce.get(ilce) ?? 0;
+      const prevTah = prevTahByIlce.get(ilce) ?? curTah;
+      const dususPct = prevTah > 0 ? ((curTah - prevTah) / prevTah) * 100 : 0;
+      const tahakkukDususRisk = tahakkukDususRiskPuan(dususPct);
+
+      const mesaiShare = mesaiVals[idx] ?? 0;
+      const mesaiRisk = mesaiVals.length > 1 ? relativeRisk(mesaiShare, mesaiMin, mesaiMax) : 50;
+
+      const giderYog = giderYogByIlce.get(ilce) ?? 0;
+      const giderYogunlukRisk = giderVals.length > 1 ? relativeRisk(giderYog, giderMin, giderMax) : 50;
+
+      const toplamRisk =
+        okunamayanRisk * 0.35 +
+        elektrikRisk * 0.25 +
+        tahakkukDususRisk * 0.2 +
+        mesaiRisk * 0.1 +
+        giderYogunlukRisk * 0.1;
+
+      const components = [
+        { label: "Okunamayan Abone", weighted: okunamayanRisk * 0.35 },
+        { label: "Elektrik Maliyeti", weighted: elektrikRisk * 0.25 },
+        { label: "Tahakkuk Düşüşü", weighted: tahakkukDususRisk * 0.2 },
+        { label: "Mesai Yükü", weighted: mesaiRisk * 0.1 },
+        { label: "Gider Yoğunluğu", weighted: giderYogunlukRisk * 0.1 },
+      ];
+      const anaRiskNedeni = [...components].sort((a, b) => b.weighted - a.weighted)[0]?.label ?? "";
+
+      return {
+        ilce,
+        toplamRisk,
+        seviye: riskSeviye(toplamRisk),
+        okunamayanRisk,
+        elektrikRisk,
+        tahakkukDususRisk,
+        mesaiRisk,
+        giderYogunlukRisk,
+        anaRiskNedeni,
+      };
+    })
+    .sort((a, b) => b.toplamRisk - a.toplamRisk);
 }
 
 /**

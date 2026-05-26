@@ -7,6 +7,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(__dirname, "..");
 const xlsxPath =
   process.env.EXCEL_SOURCE_PATH ?? path.join(root, "data", "Veri son (2).xlsx");
+const okuma2026Path = process.env.OKUMA_2026_PATH ?? null;
 const outPath = path.join(root, "data", "dashboard.json");
 const mesaiDataSheetPublicPath = path.join(root, "public", "mesai-data-sheet.json");
 const DATA_YEAR = Number(process.env.DATA_YEAR ?? "2025");
@@ -1096,6 +1097,30 @@ function main() {
 
   const kanalHatVarYok = readKanalHatVarYok(wb);
 
+  // --- 2026 okuma verisi (sadece NÜFUS + ABONE) ---
+  let records2026 = null;
+  let nufusToplam2026 = null;
+  let nufusIlceToplam2026 = null;
+  if (okuma2026Path && fs.existsSync(okuma2026Path)) {
+    try {
+      const wb2026 = XLSX.readFile(okuma2026Path, { cellDates: true });
+      const nufus2026 = readNufus(wb2026);
+      nufusToplam2026 = nufus2026.toplam;
+      nufusIlceToplam2026 = nufus2026.byIlce;
+      const emptyAltyapi = new Map();
+      const abone2026 = readAboneRecords(wb2026, nufus2026.map, emptyAltyapi);
+      records2026 = abone2026.records;
+      console.log(
+        "2026 okuma →",
+        path.basename(okuma2026Path),
+        "| records2026:",
+        records2026.length
+      );
+    } catch (e) {
+      console.warn("2026 okuma dosyası okunamadı:", e.message);
+    }
+  }
+
   const payload = {
     generatedAt: new Date().toISOString(),
     dataYear: DATA_YEAR,
@@ -1103,10 +1128,13 @@ function main() {
     nufusKaynak: `${path.basename(xlsxPath)} (NÜFUS)`,
     nufusToplam,
     nufusIlceToplam,
+    ...(nufusToplam2026 != null ? { nufusToplam2026 } : {}),
+    ...(nufusIlceToplam2026 ? { nufusIlceToplam2026 } : {}),
     months: MONTHS_TR,
     ilceler,
     mahalleler,
     records,
+    ...(records2026 ? { records2026 } : {}),
     elektrik: {
       toplamElektrikTuketimiKwh: toplamElektrikKwh,
       toplamElektrikTahakkuku: toplamElektrikTahakkuk,

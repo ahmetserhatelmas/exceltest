@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "data": "node scripts/parse-excel.mjs",
+    "data": "node --env-file=.env scripts/parse-excel.mjs",
     "sync:supabase": "node scripts/sync-supabase.mjs",
     "dev": "next dev",
     "prebuild": "node scripts/prebuild-data.mjs",

@@ -5,8 +5,13 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
+  Cell,
   LabelList,
   Legend,
+  Line,
+  LineChart,
+  Pie,
+  PieChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -17,6 +22,7 @@ import type {
   HatUzunlukHucre,
   IlcePerformansSatiri,
   IlcePerformansToplam,
+  IlceRiskScore,
   MesaiDataSheet,
   MesaiIlceSatiri,
   MesaiSubeSatiri,
@@ -50,6 +56,7 @@ import {
   aggregateKanalHatVarYok,
   collectKaynakDepoSummary,
   computeIlcePerformans,
+  computeIlceRiskScores,
   elektrikDetayDonemToplam,
   elektrikDetayIlceDonem,
   elektrikDetayKonumDonem,
@@ -153,8 +160,12 @@ export default function Dashboard({ data }: Props) {
   const [kaynakPanelOpen, setKaynakPanelOpen] = useState(true);
 
   const dataYear = data.dataYear ?? 2025;
-  /** Üst filtre: yalnızca veri yılı ve bir sonraki plan yılı (müşteri: 2025 / 2026) */
-  const availableYears = useMemo(() => [dataYear, dataYear + 1], [dataYear]);
+  /** Üst filtre: veri yılı + gerçek 2026 verisi varsa 2026 (yoksa plan yılı) */
+  const has2026Data = (data.records2026?.length ?? 0) > 0;
+  const availableYears = useMemo(
+    () => (has2026Data ? [dataYear, dataYear + 1] : [dataYear, dataYear + 1]),
+    [dataYear, has2026Data]
+  );
   const hatYillarList = useMemo(
     () => data.hatUzunluklari?.yillar ?? [],
     [data.hatUzunluklari?.yillar]
@@ -174,8 +185,17 @@ export default function Dashboard({ data }: Props) {
     }
   }, [hatYillarList, hatEnvYili]);
 
-  /** Seçilen yıl için veri var mı? (yalnızca dataYear'a ait kayıtlar mevcut) */
-  const hasDataForYear = selectedYear === dataYear;
+  /** Seçilen yıl için veri var mı? */
+  const hasDataForYear =
+    selectedYear === dataYear || (selectedYear === dataYear + 1 && has2026Data);
+
+  /** Aktif yıl için kayıtlar: 2026 seçiliyse records2026 kullan */
+  const activeRecords = useMemo(() => {
+    if (selectedYear === dataYear + 1 && has2026Data) {
+      return data.records2026 ?? [];
+    }
+    return data.records;
+  }, [selectedYear, dataYear, has2026Data, data.records, data.records2026]);
 
   const isYearly = monthIndex === -1;
 
@@ -185,13 +205,8 @@ export default function Dashboard({ data }: Props) {
   }, [data.mahalleler, ilce]);
 
   const filtered = useMemo(
-    () =>
-      filterRecords(
-        data.records,
-        ilce || null,
-        ilce && mahalle ? mahalle : null
-      ),
-    [data.records, ilce, mahalle]
+    () => filterRecords(activeRecords, ilce || null, ilce && mahalle ? mahalle : null),
+    [activeRecords, ilce, mahalle]
   );
 
   const agg = useMemo(() => aggregate(filtered), [filtered]);
@@ -213,10 +228,27 @@ export default function Dashboard({ data }: Props) {
    *  - Mahalle filtresi → Veri.xlsx eşleşmesinden (mevcut davranış)
    */
   const displayNufus = useMemo((): number | null => {
-    if (!ilce) return data.nufusToplam ?? (kpi.hasNufusData ? kpi.totalNufus : null);
-    if (!mahalle) return data.nufusIlceToplam?.[ilce] ?? (kpi.hasNufusData ? kpi.totalNufus : null);
+    const is2026 = selectedYear === dataYear + 1 && has2026Data;
+    const nufusToplam = is2026 ? (data.nufusToplam2026 ?? data.nufusToplam) : data.nufusToplam;
+    const nufusIlceToplam = is2026
+      ? (data.nufusIlceToplam2026 ?? data.nufusIlceToplam)
+      : data.nufusIlceToplam;
+    if (!ilce) return nufusToplam ?? (kpi.hasNufusData ? kpi.totalNufus : null);
+    if (!mahalle) return nufusIlceToplam?.[ilce] ?? (kpi.hasNufusData ? kpi.totalNufus : null);
     return kpi.hasNufusData ? kpi.totalNufus : null;
-  }, [ilce, mahalle, data.nufusToplam, data.nufusIlceToplam, kpi.hasNufusData, kpi.totalNufus]);
+  }, [
+    selectedYear,
+    dataYear,
+    has2026Data,
+    ilce,
+    mahalle,
+    data.nufusToplam,
+    data.nufusToplam2026,
+    data.nufusIlceToplam,
+    data.nufusIlceToplam2026,
+    kpi.hasNufusData,
+    kpi.totalNufus,
+  ]);
 
   const displayAboneNufusYuzde = useMemo((): number | null => {
     if (displayNufus == null || displayNufus <= 0) return null;
@@ -263,10 +295,10 @@ export default function Dashboard({ data }: Props) {
   const ilcePerformansResult = useMemo(
     () =>
       computeIlcePerformans(
-        data.records,
+        activeRecords,
         isYearly ? { tur: "yillik" } : { tur: "aylik", ayIndeks: monthIndex }
       ),
-    [data.records, isYearly, monthIndex]
+    [activeRecords, isYearly, monthIndex]
   );
 
   const defterSatirlari = useMemo(() => {
@@ -435,6 +467,20 @@ export default function Dashboard({ data }: Props) {
     monthIndex,
     kpi.totalTahakkuk,
   ]);
+
+  /** İlçe risk skorları (Özet bölümü için) */
+  const ilceRiskScores = useMemo(
+    () =>
+      hasDataForYear
+        ? computeIlceRiskScores(
+            activeRecords,
+            data.elektrik,
+            data.mesai,
+            isYearly ? { tur: "yillik" } : { tur: "aylik", ayIndeks: monthIndex }
+          )
+        : [],
+    [activeRecords, data.elektrik, data.mesai, hasDataForYear, isYearly, monthIndex]
+  );
 
   /** Hat uzunlukları: Excel takvim yılı veya tüm yıllar + ilçe */
   const hatYilOzet = useMemo(() => {
@@ -785,119 +831,20 @@ export default function Dashboard({ data }: Props) {
               </div>
             ) : (
             <>
-            {/* ── ÖZET ── */}
+            {/* ── GENEL BAKIŞ ── */}
             {activeSection === "ozet" && (
-              <div className="flex flex-col gap-6">
-                <ChartCard title="Aylık metreküp (M³) tüketimi">
-                  <ResponsiveContainer width="100%" height={300}>
-                    <BarChart data={chartData} margin={chartMargin}>
-                      <CartesianGrid
-                        strokeDasharray="3 3"
-                        stroke="var(--chart-tooltip-border)"
-                      />
-                      <XAxis
-                        dataKey="ay"
-                        tick={axisTick}
-                        tickLine={{ stroke: "var(--chart-tick)" }}
-                        axisLine={{ stroke: "var(--chart-tooltip-border)" }}
-                        interval={0}
-                        angle={-35}
-                        textAnchor="end"
-                        height={56}
-                      />
-                      <YAxis
-                        width={yAxisWidth}
-                        tick={{ ...axisTick, fontSize: 11 }}
-                        tickLine={{ stroke: "var(--chart-tick)" }}
-                        axisLine={{ stroke: "var(--chart-tooltip-border)" }}
-                        tickFormatter={formatYAxisM3}
-                      />
-                      <Tooltip
-                        formatter={(value) =>
-                          nf0.format(
-                            typeof value === "number" ? value : Number(value)
-                          )
-                        }
-                        contentStyle={{
-                          borderRadius: 8,
-                          background: "var(--background)",
-                          border: "1px solid var(--chart-tooltip-border)",
-                          color: "var(--foreground)",
-                        }}
-                        labelStyle={{
-                          color: "var(--foreground)",
-                          fontWeight: 600,
-                        }}
-                      />
-                      <Legend
-                        wrapperStyle={{ fontSize: 13 }}
-                        formatter={legendFormatter}
-                      />
-                      <Bar
-                        dataKey="m3"
-                        name="M³"
-                        fill="#0ea5e9"
-                        radius={[4, 4, 0, 0]}
-                      />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </ChartCard>
-
-                <ChartCard title="Aylık tahakkuk (TL)">
-                  <ResponsiveContainer width="100%" height={300}>
-                    <BarChart data={chartData} margin={chartMargin}>
-                      <CartesianGrid
-                        strokeDasharray="3 3"
-                        stroke="var(--chart-tooltip-border)"
-                      />
-                      <XAxis
-                        dataKey="ay"
-                        tick={axisTick}
-                        tickLine={{ stroke: "var(--chart-tick)" }}
-                        axisLine={{ stroke: "var(--chart-tooltip-border)" }}
-                        interval={0}
-                        angle={-35}
-                        textAnchor="end"
-                        height={56}
-                      />
-                      <YAxis
-                        width={yAxisWidth}
-                        tick={{ ...axisTick, fontSize: 11 }}
-                        tickLine={{ stroke: "var(--chart-tick)" }}
-                        axisLine={{ stroke: "var(--chart-tooltip-border)" }}
-                        tickFormatter={formatYAxisTl}
-                      />
-                      <Tooltip
-                        formatter={(value) =>
-                          nf.format(
-                            typeof value === "number" ? value : Number(value)
-                          )
-                        }
-                        contentStyle={{
-                          borderRadius: 8,
-                          background: "var(--background)",
-                          border: "1px solid var(--chart-tooltip-border)",
-                          color: "var(--foreground)",
-                        }}
-                        labelStyle={{
-                          color: "var(--foreground)",
-                          fontWeight: 600,
-                        }}
-                      />
-                      <Legend
-                        wrapperStyle={{ fontSize: 13 }}
-                        formatter={legendFormatter}
-                      />
-                      <Bar
-                        dataKey="tahakkuk"
-                        name="Tahakkuk (TL)"
-                        fill="#8b5cf6"
-                        radius={[4, 4, 0, 0]}
-                      />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </ChartCard>
-              </div>
+              <OzetGenelBakis
+                kpi={kpi}
+                agg={agg}
+                chartData={chartData}
+                months={data.months}
+                elektrikDonem={elektrikDonem}
+                mesaiUstFiltre={mesaiUstFiltre}
+                ilcePerformansResult={ilcePerformansResult}
+                ilceRiskScores={ilceRiskScores}
+                hasDataForYear={hasDataForYear}
+                axisTick={axisTick}
+              />
             )}
 
             {/* ── MUHTAR İLETİŞİM ── */}
@@ -3072,16 +3019,365 @@ function KpiCard({
 function ChartCard({
   title,
   children,
+  action,
 }: {
   title: string;
   children: ReactNode;
+  action?: ReactNode;
 }) {
   return (
     <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
-      <h2 className="mb-4 text-base font-semibold text-zinc-900 dark:text-zinc-100">
-        {title}
-      </h2>
+      <div className="mb-4 flex items-center justify-between gap-2">
+        <h2 className="text-base font-semibold text-zinc-900 dark:text-zinc-100">{title}</h2>
+        {action}
+      </div>
       {children}
+    </div>
+  );
+}
+
+// ─── Genel Bakış ────────────────────────────────────────────────────────────
+
+const tooltipStyle = {
+  borderRadius: 8,
+  background: "var(--background)",
+  border: "1px solid var(--chart-tooltip-border)",
+  color: "var(--foreground)",
+  fontSize: 12,
+} as const;
+const tooltipLabelStyle = { color: "var(--foreground)", fontWeight: 600 } as const;
+const tooltipItemStyle = { color: "var(--foreground)" } as const;
+const RISK_COLOR: Record<IlceRiskScore["seviye"], string> = {
+  dusuk: "#22c55e",
+  orta: "#eab308",
+  yuksek: "#f97316",
+  kritik: "#ef4444",
+};
+const RISK_LABEL: Record<IlceRiskScore["seviye"], string> = {
+  dusuk: "Düşük",
+  orta: "Orta",
+  yuksek: "Yüksek",
+  kritik: "Kritik",
+};
+
+function OzetGenelBakis({
+  kpi,
+  agg,
+  chartData,
+  months,
+  elektrikDonem,
+  mesaiUstFiltre,
+  ilcePerformansResult,
+  ilceRiskScores,
+  hasDataForYear,
+  axisTick,
+}: {
+  kpi: ReturnType<typeof statsForMonth>;
+  agg: ReturnType<typeof aggregate>;
+  chartData: { ay: string; m3: number; tahakkuk: number }[];
+  months: string[];
+  elektrikDonem: ReturnType<typeof import("@/lib/dashboard").elektrikDetayDonemToplam> | null | {
+    toplamKwh: number | null;
+    toplamTahakkuk: number | null;
+    toplamGider: number | null;
+    netGelir: number | null;
+    yilOk: boolean;
+    mesaiGider: number | null;
+    yakitTahakkuk: number | null;
+    detayTablo: unknown[];
+    ilceTablo: unknown[];
+  };
+  mesaiUstFiltre: number;
+  ilcePerformansResult: { satirlar: IlcePerformansSatiri[]; toplam: IlcePerformansToplam };
+  ilceRiskScores: IlceRiskScore[];
+  hasDataForYear: boolean;
+  axisTick: { fill: string; fontSize: number; fontWeight: number };
+}) {
+  if (!hasDataForYear) {
+    return (
+      <div className="flex items-center justify-center py-24 text-zinc-400">
+        Bu yıl için veri bulunmuyor.
+      </div>
+    );
+  }
+
+  const toplamTahakkuk = kpi.totalTahakkuk;
+  const toplamElektrik = (elektrikDonem as { toplamTahakkuk?: number | null } | null)?.toplamTahakkuk ?? 0;
+  const toplamYakit = (elektrikDonem as { yakitTahakkuk?: number | null } | null)?.yakitTahakkuk ?? 0;
+  const toplamMesai = mesaiUstFiltre;
+  const toplamGider = toplamElektrik + toplamYakit + toplamMesai;
+  const netGelir = toplamTahakkuk - toplamGider;
+  const toplamM3 = kpi.totalM3;
+  const toplamKwh = (elektrikDonem as { toplamKwh?: number | null } | null)?.toplamKwh ?? 0;
+  const okunamayanPct = ilcePerformansResult.toplam.okunamayanYuzde;
+
+  // Gider dağılımı donut verisi
+  const giderPie = [
+    { name: "Enerji", value: toplamElektrik, color: "#3b82f6" },
+    { name: "Personel/Mesai", value: toplamMesai, color: "#22c55e" },
+    { name: "Yakıt", value: toplamYakit, color: "#f59e0b" },
+  ].filter((d) => d.value > 0);
+
+  // Aylık gelir-gider-net çizgi verisi
+  const netGelirData = months.map((ay, i) => {
+    const tahAy = agg.monthly[i]?.tahakkuk ?? 0;
+    // Gider basit dağılım: yıllık toplam gideri aylara orantıla
+    const giderAy = toplamGider > 0 && toplamTahakkuk > 0
+      ? (tahAy / toplamTahakkuk) * toplamGider
+      : 0;
+    return { ay, gelir: tahAy, gider: giderAy, net: tahAy - giderAy };
+  });
+
+  // Okunamayan abone yatay bar (en kötü 10 ilçe)
+  const okunamayanBar = [...ilcePerformansResult.satirlar]
+    .sort((a, b) => b.okunamayanYuzde - a.okunamayanYuzde)
+    .slice(0, 10)
+    .map((r) => ({
+      ilce: r.ilce,
+      pct: parseFloat(r.okunamayanYuzde.toFixed(1)),
+      color: r.okunamayanYuzde >= 15 ? "#ef4444" : r.okunamayanYuzde >= 10 ? "#eab308" : "#22c55e",
+    }));
+
+  const top10Risk = ilceRiskScores.slice(0, 10);
+
+  return (
+    <div className="flex flex-col gap-5">
+      {/* ── KPI strip ── */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
+        {[
+          {
+            label: "Toplam Tahakkuk",
+            val: `₺${nf1.format(toplamTahakkuk / 1_000_000)} mn`,
+            sub: `${nf0.format(toplamM3)} m³ su`,
+            color: "text-sky-600",
+          },
+          {
+            label: "Toplam Gider",
+            val: `₺${nf1.format(toplamGider / 1_000_000)} mn`,
+            sub: `Elektrik + Yakıt + Mesai`,
+            color: "text-rose-600",
+          },
+          {
+            label: "Net Gelir",
+            val: `₺${nf1.format(netGelir / 1_000_000)} mn`,
+            sub: "Tahakkuk − Gider",
+            color: netGelir >= 0 ? "text-emerald-600" : "text-rose-600",
+          },
+          {
+            label: "Su Üretimi (m³)",
+            val: nf0.format(toplamM3),
+            sub: "Okunan sayaç toplamı",
+            color: "text-blue-600",
+          },
+          {
+            label: "Enerji Tüketimi",
+            val: toplamKwh > 0 ? `${nf1.format(toplamKwh / 1_000)} MWh` : "—",
+            sub: "Toplam elektrik",
+            color: "text-amber-600",
+          },
+          {
+            label: "Okunamayan Abone",
+            val: `${nf1.format(okunamayanPct)}%`,
+            sub: "Okuma başarısızlığı",
+            color: okunamayanPct >= 15 ? "text-rose-600" : okunamayanPct >= 10 ? "text-amber-600" : "text-emerald-600",
+          },
+        ].map((k) => (
+          <div
+            key={k.label}
+            className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-950"
+          >
+            <p className="text-[10px] font-medium uppercase tracking-wide text-zinc-500">
+              {k.label}
+            </p>
+            <p className={`mt-1.5 text-xl font-bold tabular-nums ${k.color}`}>{k.val}</p>
+            <p className="mt-1 text-[10px] text-zinc-400">{k.sub}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* ── Tahakkuk vs Gider + Gider Dağılımı ── */}
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-5">
+        <div className="lg:col-span-3">
+          <ChartCard title="Tahakkuk vs Gider (Aylık)">
+            <ResponsiveContainer width="100%" height={280}>
+              <BarChart data={chartData} margin={{ top: 8, right: 12, left: 12, bottom: 8 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-tooltip-border)" />
+                <XAxis dataKey="ay" tick={{ ...axisTick, fontSize: 11 }} tickLine={false} axisLine={false} interval={0} angle={-30} textAnchor="end" height={48} />
+                <YAxis width={80} tick={{ ...axisTick, fontSize: 10 }} tickLine={false} axisLine={false} tickFormatter={formatYAxisTl} />
+                <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle} itemStyle={tooltipItemStyle} formatter={(v) => [`₺${nf0.format(Number(v))}`, ""]} />
+                <Legend wrapperStyle={{ fontSize: 12 }} formatter={legendFormatter} />
+                <Bar dataKey="tahakkuk" name="Tahakkuk" fill="#3b82f6" radius={[3, 3, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </ChartCard>
+        </div>
+        <div className="lg:col-span-2">
+          <ChartCard title="Gider Dağılımı">
+            {giderPie.length === 0 ? (
+              <div className="flex h-[280px] items-center justify-center text-sm text-zinc-400">Gider verisi yok</div>
+            ) : (
+              <ResponsiveContainer width="100%" height={280}>
+                <PieChart>
+                  <Pie
+                    data={giderPie}
+                    cx="50%"
+                    cy="45%"
+                    innerRadius={65}
+                    outerRadius={95}
+                    paddingAngle={3}
+                    dataKey="value"
+                    label={({ name, percent }: { name?: string; percent?: number }) => `${name ?? ""} %${((percent ?? 0) * 100).toFixed(0)}`}
+                    labelLine={false}
+                  >
+                    {giderPie.map((entry) => (
+                      <Cell key={entry.name} fill={entry.color} />
+                    ))}
+                  </Pie>
+                  <Tooltip
+                    contentStyle={tooltipStyle}
+                    itemStyle={tooltipItemStyle}
+                    formatter={(v) => [`₺${nf0.format(Number(v))}`, ""]}
+                  />
+                </PieChart>
+              </ResponsiveContainer>
+            )}
+            {/* Toplam gider etiketi ortada */}
+            <p className="mt-1 text-center text-xs text-zinc-500">
+              Toplam Gider: <span className="font-semibold text-zinc-800 dark:text-zinc-200">₺{nf0.format(toplamGider)}</span>
+            </p>
+          </ChartCard>
+        </div>
+      </div>
+
+      {/* ── Okunamayan Abone + Risk Tablosu + Net Gelir Çizgisi ── */}
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
+        {/* Okunamayan Abone Yatay Bar */}
+        <div>
+          <ChartCard title="Okunamayan Abone Oranı (İlk 10)">
+            <ResponsiveContainer width="100%" height={280}>
+              <BarChart data={okunamayanBar} layout="vertical" margin={{ top: 4, right: 40, left: 4, bottom: 4 }}>
+                <XAxis type="number" tick={{ ...axisTick, fontSize: 10 }} tickLine={false} axisLine={false} tickFormatter={(v) => `${v}%`} domain={[0, 100]} />
+                <YAxis type="category" dataKey="ilce" tick={{ ...axisTick, fontSize: 10 }} tickLine={false} axisLine={false} width={72} />
+                <Tooltip
+                  contentStyle={tooltipStyle}
+                  labelStyle={tooltipLabelStyle}
+                  itemStyle={{ color: "var(--foreground)" }}
+                  formatter={(v) => [`${v}%`, "Okunamayan"]}
+                />
+                <Bar dataKey="pct" radius={[0, 3, 3, 0]} isAnimationActive={false}>
+                  {okunamayanBar.map((entry) => (
+                    <Cell key={entry.ilce} fill={entry.color} />
+                  ))}
+                  <LabelList dataKey="pct" position="right" style={{ fontSize: 10, fill: "var(--chart-tick)" }} formatter={(v: unknown) => `${v}%`} />
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+            <div className="mt-2 flex gap-3 text-[10px] text-zinc-500">
+              <span className="flex items-center gap-1"><span className="inline-block h-2 w-2 rounded-sm bg-emerald-500" />{"<10% İyi"}</span>
+              <span className="flex items-center gap-1"><span className="inline-block h-2 w-2 rounded-sm bg-yellow-400" />10–15% Dikkat</span>
+              <span className="flex items-center gap-1"><span className="inline-block h-2 w-2 rounded-sm bg-red-500" />{">15% Kritik"}</span>
+            </div>
+          </ChartCard>
+        </div>
+
+        {/* Risk Tablosu */}
+        <div>
+          <ChartCard title="Risk Tablosu (İlk 10 İlçe)">
+            {top10Risk.length === 0 ? (
+              <div className="flex h-[280px] items-center justify-center text-sm text-zinc-400">Risk verisi hesaplanamadı</div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b border-zinc-100 text-left text-[10px] font-medium uppercase tracking-wide text-zinc-400 dark:border-zinc-800">
+                      <th className="pb-2 pr-2">Sıra</th>
+                      <th className="pb-2 pr-2">İlçe</th>
+                      <th className="pb-2 pr-2">Risk</th>
+                      <th className="pb-2">Ana Neden</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {top10Risk.map((r, i) => (
+                      <tr key={r.ilce} className="border-b border-zinc-50 dark:border-zinc-900">
+                        <td className="py-1.5 pr-2 text-zinc-400">{i + 1}</td>
+                        <td className="py-1.5 pr-2 font-medium text-zinc-800 dark:text-zinc-200">
+                          {r.ilce.charAt(0) + r.ilce.slice(1).toLocaleLowerCase("tr-TR")}
+                        </td>
+                        <td className="py-1.5 pr-2">
+                          <span
+                            className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold text-white"
+                            style={{ backgroundColor: RISK_COLOR[r.seviye] }}
+                          >
+                            {nf0.format(r.toplamRisk)} · {RISK_LABEL[r.seviye]}
+                          </span>
+                        </td>
+                        <td className="py-1.5 text-zinc-500">{r.anaRiskNedeni}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </ChartCard>
+        </div>
+
+        {/* Aylık Gelir-Gider-Net Gelir Çizgi */}
+        <div>
+          <ChartCard title="Aylık Gelir / Gider / Net">
+            <ResponsiveContainer width="100%" height={280}>
+              <LineChart data={netGelirData} margin={{ top: 8, right: 12, left: 8, bottom: 8 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-tooltip-border)" />
+                <XAxis dataKey="ay" tick={{ ...axisTick, fontSize: 10 }} tickLine={false} axisLine={false} interval={0} angle={-30} textAnchor="end" height={44} />
+                <YAxis width={72} tick={{ ...axisTick, fontSize: 10 }} tickLine={false} axisLine={false} tickFormatter={formatYAxisTl} />
+                <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle} itemStyle={tooltipItemStyle} formatter={(v) => [`₺${nf0.format(Number(v))}`, ""]} />
+                <Legend wrapperStyle={{ fontSize: 11 }} formatter={legendFormatter} />
+                <Line type="monotone" dataKey="gelir" name="Gelir (Tahakkuk)" stroke="#3b82f6" strokeWidth={2} dot={false} />
+                <Line type="monotone" dataKey="gider" name="Gider" stroke="#ef4444" strokeWidth={2} dot={false} />
+                <Line type="monotone" dataKey="net" name="Net Gelir" stroke="#22c55e" strokeWidth={2} dot={false} strokeDasharray="4 2" />
+              </LineChart>
+            </ResponsiveContainer>
+          </ChartCard>
+        </div>
+      </div>
+
+      {/* ── KPI Özet alt şerit ── */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        {[
+          {
+            label: "Tahakkuk Oranı",
+            val: ilcePerformansResult.toplam.okumaOrani > 0
+              ? `%${nf1.format(ilcePerformansResult.toplam.okumaOrani)}`
+              : "—",
+            sub: "Okuma / Abone",
+          },
+          {
+            label: "Birim Maliyet",
+            val: toplamM3 > 0 ? `₺${nf.format(toplamTahakkuk / toplamM3)}` : "—",
+            sub: "TL / m³",
+          },
+          {
+            label: "Fatura Başarısı",
+            val: ilcePerformansResult.toplam.faturaBasarisi > 0
+              ? `%${nf1.format(ilcePerformansResult.toplam.faturaBasarisi)}`
+              : "—",
+            sub: "Fatura / Okuma",
+          },
+          {
+            label: "Enerji Verimliliği",
+            val: toplamKwh > 0 && toplamM3 > 0 ? `${nf.format(toplamM3 / toplamKwh)} m³/kWh` : "—",
+            sub: "Su Üretimi / Enerji",
+          },
+        ].map((k) => (
+          <div
+            key={k.label}
+            className="rounded-xl border border-zinc-200 bg-zinc-50/60 p-4 dark:border-zinc-800 dark:bg-zinc-900/40"
+          >
+            <p className="text-[10px] font-medium uppercase tracking-wide text-zinc-500">{k.label}</p>
+            <p className="mt-1.5 text-lg font-bold tabular-nums text-zinc-900 dark:text-zinc-50">{k.val}</p>
+            <p className="mt-1 text-[10px] text-zinc-400">{k.sub}</p>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
