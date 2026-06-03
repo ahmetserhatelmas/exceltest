@@ -677,30 +677,33 @@ export default function Dashboard({ data }: Props) {
 
         {/* KPI şeridi — renkli */}
         <div className="border-b border-zinc-200 bg-white px-6 py-3 dark:border-zinc-800 dark:bg-zinc-900">
-          {hasDataForYear ? (() => {
-            const topTah = kpi.totalTahakkuk;
-            const topGid = (() => { const e = data.elektrik?.toplamElektrikTahakkuku ?? 0; const y = yakitTahakkukuForPeriod(data.yakit, selectedYear, ilce); return elektrikDonem?.toplamGider ?? (e + y + mesaiUstFiltre); })();
-            const topNet = elektrikDonem?.netGelir ?? elektrik?.netGelir ?? (topTah - topGid);
-            const topM3 = kpi.totalM3;
-            const topAbone = kpi.totalAbone;
-            const okunamayanPct = ilcePerformansResult.toplam.okunamayanYuzde;
-            return (
-              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
-                <KpiCard accent="#0ea5e9" icon="💰" title="Toplam Tahakkuk" subtitle={isYearly ? "yıllık toplam" : selectedMonthLabel} value={`₺${nf1.format(topTah / 1_000_000)} mn`} hint={`₺${nf0.format(topTah)}`} />
-                <KpiCard accent="#ef4444" icon="📉" title="Toplam Gider" subtitle="Elektrik + Yakıt + Mesai" value={`₺${nf1.format(topGid / 1_000_000)} mn`} hint={`₺${nf0.format(topGid)}`} />
-                <KpiCard accent={topNet >= 0 ? "#22c55e" : "#ef4444"} icon={topNet >= 0 ? "📈" : "⚠️"} title="Net Gelir" subtitle="Tahakkuk − Gider" value={`₺${nf1.format(topNet / 1_000_000)} mn`} hint={`₺${nf0.format(topNet)}`} />
-                <KpiCard accent="#3b82f6" icon="💧" title="Su Üretimi (m³)" subtitle="Okunan sayaç toplamı" value={nf0.format(topM3)} />
-                <KpiCard accent="#8b5cf6" icon="👤" title="Toplam Abone" subtitle="seçili alan" value={nf0.format(topAbone)} />
-                <KpiCard
-                  accent={okunamayanPct >= 15 ? "#ef4444" : okunamayanPct >= 10 ? "#f59e0b" : "#22c55e"}
-                  icon="👁️"
-                  title="Okunamayan Abone"
-                  subtitle="Okuma başarısızlığı"
-                  value={`${nf1.format(okunamayanPct)}%`}
-                />
-              </div>
-            );
-          })() : (
+          {hasDataForYear ? (
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-8">
+              <KpiCard accent="#6366f1" icon="👥" title="Toplam nüfus" subtitle={displayNufus != null ? (mahalle ? "eşleşen mahalle" : "Nufus.xlsx") : "eşleşme yok"} value={displayNufus != null ? nf0.format(displayNufus) : "—"} />
+              <KpiCard accent="#8b5cf6" icon="👤" title="Toplam abone" subtitle="seçili alan" value={nf0.format(kpi.totalAbone)} />
+              <KpiCard accent="#0ea5e9" icon="💰" title="Toplam tahakkuk" subtitle={isYearly ? "yıllık toplam (TL)" : `${selectedMonthLabel} (TL)`} value={nf.format(kpi.totalTahakkuk)} valueCompact hint={`₺${nf0.format(kpi.totalTahakkuk)}`} />
+              <KpiCard accent="#64748b" icon="📐" title="Birim fiyat" subtitle="TL/m³" value={kpi.birimFiyat != null ? `${nf.format(kpi.birimFiyat)} ₺` : "—"} />
+              <KpiCard accent="#06b6d4" icon="📊" title="Abone / nüfus" subtitle={displayAboneNufusYuzde != null ? "yüzde" : "eşleşme yok"} value={displayAboneNufusYuzde != null ? `% ${nf.format(displayAboneNufusYuzde)}` : "—"} />
+              <KpiCard accent="#3b82f6" icon="💧" title="M³ / abone" subtitle={isYearly ? "yıllık toplam" : selectedMonthLabel} value={kpi.m3PerAbone != null ? nf.format(kpi.m3PerAbone) : "—"} />
+              <KpiCard
+                accent="#ef4444"
+                icon="📉"
+                title="Toplam gider"
+                subtitle={elektrikDonem?.yilOk ? "elektrik + yakıt + mesai" : `${selectedYear} plan`}
+                hint={elektrikDonem?.yilOk && elektrikDonem.toplamTahakkuk != null && elektrikDonem.yakitTahakkuk != null && elektrikDonem.mesaiGider != null ? `Elektrik: ${nf.format(elektrikDonem.toplamTahakkuk)} ₺ · Yakıt: ${nf.format(elektrikDonem.yakitTahakkuk)} ₺ · Mesai: ${nf.format(elektrikDonem.mesaiGider)} ₺` : undefined}
+                value={elektrikDonem?.toplamGider != null ? `${nf.format(elektrikDonem.toplamGider)} ₺` : (() => { const eTah = data.elektrik?.toplamElektrikTahakkuku ?? 0; const yTah = yakitTahakkukuForPeriod(data.yakit, selectedYear, ilce); const mTah = mesaiUstFiltre; if (!data.elektrik && !data.yakit && mTah === 0) return "—"; return `${nf.format(eTah + yTah + mTah)} ₺`; })()}
+                valueCompact
+              />
+              <KpiCard
+                accent={(() => { const ng = elektrikDonem?.netGelir ?? elektrik?.netGelir; return ng != null ? (ng >= 0 ? "#22c55e" : "#ef4444") : "#22c55e"; })()}
+                icon={(() => { const ng = elektrikDonem?.netGelir ?? elektrik?.netGelir; return ng != null && ng < 0 ? "⚠️" : "📈"; })()}
+                title="Net gelir"
+                subtitle="su tah. − gider"
+                value={elektrikDonem?.netGelir != null ? `${nf.format(elektrikDonem.netGelir)} ₺` : elektrik ? `${nf.format(elektrik.netGelir)} ₺` : "—"}
+                valueCompact
+              />
+            </div>
+          ) : (
             <p className="text-sm text-zinc-500 dark:text-zinc-500"><span className="font-medium text-zinc-700 dark:text-zinc-300">{selectedYear}</span> yılı için henüz veri yüklenmedi.</p>
           )}
         </div>
