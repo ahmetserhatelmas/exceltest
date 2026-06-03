@@ -267,6 +267,7 @@ export default function Dashboard({ data }: Props) {
         ay,
         m3: agg.monthly[i]?.m3 ?? 0,
         tahakkuk: agg.monthly[i]?.tahakkuk ?? 0,
+        okuma: agg.monthly[i]?.okuma ?? 0,
       })),
     [agg.monthly, data.months]
   );
@@ -3110,18 +3111,21 @@ function OzetGenelBakis({
   const toplamM3 = kpi.totalM3;
   const toplamKwh = (elektrikDonem as { toplamKwh?: number | null } | null)?.toplamKwh ?? 0;
   const okunamayanPct = ilcePerformansResult.toplam.okunamayanYuzde;
+  const tahakkukOrani = ilcePerformansResult.toplam.okumaOrani;
+  const faturaBasarisi = ilcePerformansResult.toplam.faturaBasarisi;
+  const birimMaliyet = toplamM3 > 0 ? toplamTahakkuk / toplamM3 : null;
+  const enerjVerim = toplamKwh > 0 && toplamM3 > 0 ? toplamM3 / toplamKwh : null;
 
-  // Gider dağılımı donut verisi
+  // Gider dağılımı donut + legend
   const giderPie = [
     { name: "Enerji", value: toplamElektrik, color: "#3b82f6" },
-    { name: "Personel/Mesai", value: toplamMesai, color: "#22c55e" },
+    { name: "Mesai", value: toplamMesai, color: "#22c55e" },
     { name: "Yakıt", value: toplamYakit, color: "#f59e0b" },
   ].filter((d) => d.value > 0);
 
   // Aylık gelir-gider-net çizgi verisi
   const netGelirData = months.map((ay, i) => {
     const tahAy = agg.monthly[i]?.tahakkuk ?? 0;
-    // Gider basit dağılım: yıllık toplam gideri aylara orantıla
     const giderAy = toplamGider > 0 && toplamTahakkuk > 0
       ? (tahAy / toplamTahakkuk) * toplamGider
       : 0;
@@ -3133,63 +3137,95 @@ function OzetGenelBakis({
     .sort((a, b) => b.okunamayanYuzde - a.okunamayanYuzde)
     .slice(0, 10)
     .map((r) => ({
-      ilce: r.ilce,
+      ilce: r.ilce.charAt(0) + r.ilce.slice(1).toLocaleLowerCase("tr-TR"),
       pct: parseFloat(r.okunamayanYuzde.toFixed(1)),
       color: r.okunamayanYuzde >= 15 ? "#ef4444" : r.okunamayanYuzde >= 10 ? "#eab308" : "#22c55e",
     }));
 
   const top10Risk = ilceRiskScores.slice(0, 10);
 
+  // KPI kartı konfigürasyonları
+  const kpiKartlar = [
+    {
+      label: "Toplam Tahakkuk",
+      val: `₺${nf1.format(toplamTahakkuk / 1_000_000)} mn`,
+      fullVal: `₺${nf0.format(toplamTahakkuk)}`,
+      sub: `${nf0.format(toplamM3)} m³ su`,
+      accent: "#0ea5e9",
+      icon: "💰",
+      trend: null as number | null,
+    },
+    {
+      label: "Toplam Gider",
+      val: `₺${nf1.format(toplamGider / 1_000_000)} mn`,
+      fullVal: `₺${nf0.format(toplamGider)}`,
+      sub: "Elektrik + Yakıt + Mesai",
+      accent: "#ef4444",
+      icon: "📉",
+      trend: null as number | null,
+    },
+    {
+      label: "Net Gelir",
+      val: `₺${nf1.format(netGelir / 1_000_000)} mn`,
+      fullVal: `₺${nf0.format(netGelir)}`,
+      sub: "Tahakkuk − Gider",
+      accent: netGelir >= 0 ? "#22c55e" : "#ef4444",
+      icon: netGelir >= 0 ? "📈" : "⚠️",
+      trend: null as number | null,
+    },
+    {
+      label: "Su Üretimi (m³)",
+      val: nf0.format(toplamM3),
+      fullVal: `${nf0.format(toplamM3)} m³`,
+      sub: "Okunan sayaç toplamı",
+      accent: "#3b82f6",
+      icon: "💧",
+      trend: null as number | null,
+    },
+    {
+      label: "Enerji Tüketimi",
+      val: toplamKwh > 0 ? `${nf1.format(toplamKwh / 1_000)} MWh` : "—",
+      fullVal: toplamKwh > 0 ? `${nf0.format(toplamKwh)} kWh` : "—",
+      sub: "Toplam elektrik",
+      accent: "#f59e0b",
+      icon: "⚡",
+      trend: null as number | null,
+    },
+    {
+      label: "Okunamayan Abone",
+      val: `${nf1.format(okunamayanPct)}%`,
+      fullVal: `${nf1.format(okunamayanPct)}%`,
+      sub: "Okuma başarısızlığı",
+      accent: okunamayanPct >= 15 ? "#ef4444" : okunamayanPct >= 10 ? "#f59e0b" : "#22c55e",
+      icon: "👁️",
+      trend: null as number | null,
+    },
+  ];
+
   return (
     <div className="flex flex-col gap-5">
-      {/* ── KPI strip ── */}
+      {/* ── KPI strip — ikon + renk şeridi + değer ── */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
-        {[
-          {
-            label: "Toplam Tahakkuk",
-            val: `₺${nf1.format(toplamTahakkuk / 1_000_000)} mn`,
-            sub: `${nf0.format(toplamM3)} m³ su`,
-            color: "text-sky-600",
-          },
-          {
-            label: "Toplam Gider",
-            val: `₺${nf1.format(toplamGider / 1_000_000)} mn`,
-            sub: `Elektrik + Yakıt + Mesai`,
-            color: "text-rose-600",
-          },
-          {
-            label: "Net Gelir",
-            val: `₺${nf1.format(netGelir / 1_000_000)} mn`,
-            sub: "Tahakkuk − Gider",
-            color: netGelir >= 0 ? "text-emerald-600" : "text-rose-600",
-          },
-          {
-            label: "Su Üretimi (m³)",
-            val: nf0.format(toplamM3),
-            sub: "Okunan sayaç toplamı",
-            color: "text-blue-600",
-          },
-          {
-            label: "Enerji Tüketimi",
-            val: toplamKwh > 0 ? `${nf1.format(toplamKwh / 1_000)} MWh` : "—",
-            sub: "Toplam elektrik",
-            color: "text-amber-600",
-          },
-          {
-            label: "Okunamayan Abone",
-            val: `${nf1.format(okunamayanPct)}%`,
-            sub: "Okuma başarısızlığı",
-            color: okunamayanPct >= 15 ? "text-rose-600" : okunamayanPct >= 10 ? "text-amber-600" : "text-emerald-600",
-          },
-        ].map((k) => (
+        {kpiKartlar.map((k) => (
           <div
             key={k.label}
-            className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-950"
+            className="relative overflow-hidden rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-950"
+            title={k.fullVal}
           >
-            <p className="text-[10px] font-medium uppercase tracking-wide text-zinc-500">
-              {k.label}
+            {/* Renkli üst şerit */}
+            <div
+              className="absolute inset-x-0 top-0 h-1 rounded-t-xl"
+              style={{ backgroundColor: k.accent }}
+            />
+            <div className="flex items-start justify-between gap-1">
+              <p className="text-[10px] font-medium uppercase tracking-wide text-zinc-500 leading-tight">
+                {k.label}
+              </p>
+              <span className="text-base leading-none">{k.icon}</span>
+            </div>
+            <p className="mt-2 text-lg font-bold tabular-nums leading-tight" style={{ color: k.accent }}>
+              {k.val}
             </p>
-            <p className={`mt-1.5 text-xl font-bold tabular-nums ${k.color}`}>{k.val}</p>
             <p className="mt-1 text-[10px] text-zinc-400">{k.sub}</p>
           </div>
         ))}
@@ -3198,15 +3234,26 @@ function OzetGenelBakis({
       {/* ── Tahakkuk vs Gider + Gider Dağılımı ── */}
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-5">
         <div className="lg:col-span-3">
-          <ChartCard title="Tahakkuk vs Gider (Aylık)">
+          <ChartCard title="Tahakkuk vs Su Üretimi (Aylık)">
             <ResponsiveContainer width="100%" height={280}>
-              <BarChart data={chartData} margin={{ top: 8, right: 12, left: 12, bottom: 8 }}>
+              <BarChart data={chartData} margin={{ top: 8, right: 52, left: 12, bottom: 8 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-tooltip-border)" />
                 <XAxis dataKey="ay" tick={{ ...axisTick, fontSize: 11 }} tickLine={false} axisLine={false} interval={0} angle={-30} textAnchor="end" height={48} />
-                <YAxis width={80} tick={{ ...axisTick, fontSize: 10 }} tickLine={false} axisLine={false} tickFormatter={formatYAxisTl} />
-                <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle} itemStyle={tooltipItemStyle} formatter={(v) => [`₺${nf0.format(Number(v))}`, ""]} />
+                <YAxis yAxisId="tl" width={80} tick={{ ...axisTick, fontSize: 10 }} tickLine={false} axisLine={false} tickFormatter={formatYAxisTl} />
+                <YAxis yAxisId="m3" orientation="right" width={48} tick={{ ...axisTick, fontSize: 10 }} tickLine={false} axisLine={false} tickFormatter={formatYAxisM3} />
+                <Tooltip
+                  contentStyle={tooltipStyle}
+                  labelStyle={tooltipLabelStyle}
+                  itemStyle={tooltipItemStyle}
+                  formatter={(v, name) =>
+                    name === "Su Üretimi (m³)"
+                      ? [`${nf0.format(Number(v))} m³`, name]
+                      : [`₺${nf0.format(Number(v))}`, name]
+                  }
+                />
                 <Legend wrapperStyle={{ fontSize: 12 }} formatter={legendFormatter} />
-                <Bar dataKey="tahakkuk" name="Tahakkuk" fill="#3b82f6" radius={[3, 3, 0, 0]} />
+                <Bar yAxisId="tl" dataKey="tahakkuk" name="Tahakkuk (TL)" fill="#3b82f6" radius={[3, 3, 0, 0]} />
+                <Line yAxisId="m3" type="monotone" dataKey="m3" name="Su Üretimi (m³)" stroke="#22c55e" strokeWidth={2} dot={{ r: 3, fill: "#22c55e" }} />
               </BarChart>
             </ResponsiveContainer>
           </ChartCard>
@@ -3216,35 +3263,53 @@ function OzetGenelBakis({
             {giderPie.length === 0 ? (
               <div className="flex h-[280px] items-center justify-center text-sm text-zinc-400">Gider verisi yok</div>
             ) : (
-              <ResponsiveContainer width="100%" height={280}>
-                <PieChart>
-                  <Pie
-                    data={giderPie}
-                    cx="50%"
-                    cy="45%"
-                    innerRadius={65}
-                    outerRadius={95}
-                    paddingAngle={3}
-                    dataKey="value"
-                    label={({ name, percent }: { name?: string; percent?: number }) => `${name ?? ""} %${((percent ?? 0) * 100).toFixed(0)}`}
-                    labelLine={false}
-                  >
-                    {giderPie.map((entry) => (
-                      <Cell key={entry.name} fill={entry.color} />
-                    ))}
-                  </Pie>
-                  <Tooltip
-                    contentStyle={tooltipStyle}
-                    itemStyle={tooltipItemStyle}
-                    formatter={(v) => [`₺${nf0.format(Number(v))}`, ""]}
-                  />
-                </PieChart>
-              </ResponsiveContainer>
+              <div className="flex h-[280px] flex-col justify-center">
+                <ResponsiveContainer width="100%" height={180}>
+                  <PieChart>
+                    <Pie
+                      data={giderPie}
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={55}
+                      outerRadius={80}
+                      paddingAngle={3}
+                      dataKey="value"
+                    >
+                      {giderPie.map((entry) => (
+                        <Cell key={entry.name} fill={entry.color} />
+                      ))}
+                    </Pie>
+                    <Tooltip
+                      contentStyle={tooltipStyle}
+                      itemStyle={tooltipItemStyle}
+                      formatter={(v) => [`₺${nf0.format(Number(v))}`, ""]}
+                    />
+                  </PieChart>
+                </ResponsiveContainer>
+                {/* Legend — her kalem kendi satırında TL + % */}
+                <div className="mt-1 space-y-1 px-2">
+                  {giderPie.map((d) => {
+                    const pct = toplamGider > 0 ? (d.value / toplamGider) * 100 : 0;
+                    return (
+                      <div key={d.name} className="flex items-center justify-between gap-2 text-xs">
+                        <span className="flex items-center gap-1.5">
+                          <span className="inline-block h-2.5 w-2.5 shrink-0 rounded-sm" style={{ backgroundColor: d.color }} />
+                          <span className="text-zinc-700 dark:text-zinc-300">{d.name}</span>
+                        </span>
+                        <span className="tabular-nums text-zinc-500">
+                          ₺{nf1.format(d.value / 1_000_000)} mn
+                          <span className="ml-1 text-[10px] text-zinc-400">({nf1.format(pct)}%)</span>
+                        </span>
+                      </div>
+                    );
+                  })}
+                  <div className="mt-1 border-t border-zinc-100 pt-1 dark:border-zinc-800 flex items-center justify-between text-xs font-semibold">
+                    <span className="text-zinc-600 dark:text-zinc-400">Toplam</span>
+                    <span className="tabular-nums text-zinc-800 dark:text-zinc-200">₺{nf0.format(toplamGider)}</span>
+                  </div>
+                </div>
+              </div>
             )}
-            {/* Toplam gider etiketi ortada */}
-            <p className="mt-1 text-center text-xs text-zinc-500">
-              Toplam Gider: <span className="font-semibold text-zinc-800 dark:text-zinc-200">₺{nf0.format(toplamGider)}</span>
-            </p>
           </ChartCard>
         </div>
       </div>
@@ -3255,13 +3320,13 @@ function OzetGenelBakis({
         <div>
           <ChartCard title="Okunamayan Abone Oranı (İlk 10)">
             <ResponsiveContainer width="100%" height={280}>
-              <BarChart data={okunamayanBar} layout="vertical" margin={{ top: 4, right: 40, left: 4, bottom: 4 }}>
-                <XAxis type="number" tick={{ ...axisTick, fontSize: 10 }} tickLine={false} axisLine={false} tickFormatter={(v) => `${v}%`} domain={[0, 100]} />
-                <YAxis type="category" dataKey="ilce" tick={{ ...axisTick, fontSize: 10 }} tickLine={false} axisLine={false} width={72} />
+              <BarChart data={okunamayanBar} layout="vertical" margin={{ top: 4, right: 44, left: 4, bottom: 4 }}>
+                <XAxis type="number" tick={{ ...axisTick, fontSize: 10 }} tickLine={false} axisLine={false} tickFormatter={(v) => `${v}%`} domain={[0, "dataMax + 5"]} />
+                <YAxis type="category" dataKey="ilce" tick={{ ...axisTick, fontSize: 10 }} tickLine={false} axisLine={false} width={76} />
                 <Tooltip
                   contentStyle={tooltipStyle}
                   labelStyle={tooltipLabelStyle}
-                  itemStyle={{ color: "var(--foreground)" }}
+                  itemStyle={tooltipItemStyle}
                   formatter={(v) => [`${v}%`, "Okunamayan"]}
                 />
                 <Bar dataKey="pct" radius={[0, 3, 3, 0]} isAnimationActive={false}>
@@ -3290,10 +3355,10 @@ function OzetGenelBakis({
                 <table className="w-full text-xs">
                   <thead>
                     <tr className="border-b border-zinc-100 text-left text-[10px] font-medium uppercase tracking-wide text-zinc-400 dark:border-zinc-800">
-                      <th className="pb-2 pr-2">Sıra</th>
+                      <th className="pb-2 pr-2">#</th>
                       <th className="pb-2 pr-2">İlçe</th>
                       <th className="pb-2 pr-2">Risk</th>
-                      <th className="pb-2">Ana Neden</th>
+                      <th className="pb-2">Sebep</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -3305,13 +3370,13 @@ function OzetGenelBakis({
                         </td>
                         <td className="py-1.5 pr-2">
                           <span
-                            className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold text-white"
+                            className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold text-white"
                             style={{ backgroundColor: RISK_COLOR[r.seviye] }}
                           >
-                            {nf0.format(r.toplamRisk)} · {RISK_LABEL[r.seviye]}
+                            {nf0.format(r.toplamRisk)}
                           </span>
                         </td>
-                        <td className="py-1.5 text-zinc-500">{r.anaRiskNedeni}</td>
+                        <td className="py-1.5 text-zinc-500 text-[10px]">{r.anaRiskNedeni}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -3331,7 +3396,7 @@ function OzetGenelBakis({
                 <YAxis width={72} tick={{ ...axisTick, fontSize: 10 }} tickLine={false} axisLine={false} tickFormatter={formatYAxisTl} />
                 <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle} itemStyle={tooltipItemStyle} formatter={(v) => [`₺${nf0.format(Number(v))}`, ""]} />
                 <Legend wrapperStyle={{ fontSize: 11 }} formatter={legendFormatter} />
-                <Line type="monotone" dataKey="gelir" name="Gelir (Tahakkuk)" stroke="#3b82f6" strokeWidth={2} dot={false} />
+                <Line type="monotone" dataKey="gelir" name="Gelir" stroke="#3b82f6" strokeWidth={2} dot={false} />
                 <Line type="monotone" dataKey="gider" name="Gider" stroke="#ef4444" strokeWidth={2} dot={false} />
                 <Line type="monotone" dataKey="net" name="Net Gelir" stroke="#22c55e" strokeWidth={2} dot={false} strokeDasharray="4 2" />
               </LineChart>
@@ -3340,41 +3405,78 @@ function OzetGenelBakis({
         </div>
       </div>
 
-      {/* ── KPI Özet alt şerit ── */}
+      {/* ── KPI Özet alt şerit — dairesel göstergeli ── */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         {[
           {
             label: "Tahakkuk Oranı",
-            val: ilcePerformansResult.toplam.okumaOrani > 0
-              ? `%${nf1.format(ilcePerformansResult.toplam.okumaOrani)}`
-              : "—",
-            sub: "Okuma / Abone",
+            val: tahakkukOrani > 0 ? tahakkukOrani : null,
+            display: tahakkukOrani > 0 ? `%${nf1.format(tahakkukOrani)}` : "—",
+            sub: "Okuma / Abone × 100",
+            max: 100,
+            color: tahakkukOrani >= 90 ? "#22c55e" : tahakkukOrani >= 75 ? "#f59e0b" : "#ef4444",
           },
           {
             label: "Birim Maliyet",
-            val: toplamM3 > 0 ? `₺${nf.format(toplamTahakkuk / toplamM3)}` : "—",
+            val: birimMaliyet,
+            display: birimMaliyet != null ? `₺${nf.format(birimMaliyet)}` : "—",
             sub: "TL / m³",
+            max: null,
+            color: "#3b82f6",
           },
           {
             label: "Fatura Başarısı",
-            val: ilcePerformansResult.toplam.faturaBasarisi > 0
-              ? `%${nf1.format(ilcePerformansResult.toplam.faturaBasarisi)}`
-              : "—",
-            sub: "Fatura / Okuma",
+            val: faturaBasarisi > 0 ? faturaBasarisi : null,
+            display: faturaBasarisi > 0 ? `%${nf1.format(faturaBasarisi)}` : "—",
+            sub: "Fatura / Okuma × 100",
+            max: 100,
+            color: faturaBasarisi >= 90 ? "#22c55e" : faturaBasarisi >= 75 ? "#f59e0b" : "#ef4444",
           },
           {
             label: "Enerji Verimliliği",
-            val: toplamKwh > 0 && toplamM3 > 0 ? `${nf.format(toplamM3 / toplamKwh)} m³/kWh` : "—",
+            val: enerjVerim,
+            display: enerjVerim != null ? `${nf.format(enerjVerim)} m³/kWh` : "—",
             sub: "Su Üretimi / Enerji",
+            max: null,
+            color: "#f59e0b",
           },
         ].map((k) => (
           <div
             key={k.label}
-            className="rounded-xl border border-zinc-200 bg-zinc-50/60 p-4 dark:border-zinc-800 dark:bg-zinc-900/40"
+            className="flex flex-col items-center gap-2 rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-950"
           >
-            <p className="text-[10px] font-medium uppercase tracking-wide text-zinc-500">{k.label}</p>
-            <p className="mt-1.5 text-lg font-bold tabular-nums text-zinc-900 dark:text-zinc-50">{k.val}</p>
-            <p className="mt-1 text-[10px] text-zinc-400">{k.sub}</p>
+            {/* Dairesel ilerleme göstergesi */}
+            {k.max != null && k.val != null ? (
+              <svg width="72" height="72" viewBox="0 0 72 72" className="shrink-0">
+                <circle cx="36" cy="36" r="28" fill="none" stroke="var(--chart-tooltip-border)" strokeWidth="7" />
+                <circle
+                  cx="36"
+                  cy="36"
+                  r="28"
+                  fill="none"
+                  stroke={k.color}
+                  strokeWidth="7"
+                  strokeLinecap="round"
+                  strokeDasharray={`${(Math.min(k.val, k.max) / k.max) * 175.9} 175.9`}
+                  strokeDashoffset="43.98"
+                  style={{ transform: "rotate(-90deg)", transformOrigin: "50% 50%" }}
+                />
+                <text x="36" y="40" textAnchor="middle" fontSize="13" fontWeight="700" fill={k.color}>
+                  {k.display}
+                </text>
+              </svg>
+            ) : (
+              <div
+                className="flex h-[72px] w-[72px] shrink-0 items-center justify-center rounded-full border-4 text-sm font-bold tabular-nums"
+                style={{ borderColor: k.color, color: k.color }}
+              >
+                {k.display}
+              </div>
+            )}
+            <div className="text-center">
+              <p className="text-xs font-semibold text-zinc-800 dark:text-zinc-200">{k.label}</p>
+              <p className="text-[10px] text-zinc-400">{k.sub}</p>
+            </div>
           </div>
         ))}
       </div>
