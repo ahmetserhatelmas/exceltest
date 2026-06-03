@@ -114,15 +114,15 @@ type SectionId =
   | "yakit"
   | "mesai";
 
-const NAV_SECTIONS: { id: SectionId; label: string }[] = [
-  { id: "ozet", label: "Özet" },
-  { id: "muhtar", label: "Muhtar İletişim" },
-  { id: "altyapi", label: "Su Altyapı Envanteri" },
-  { id: "hatlar", label: "Altyapı Hatları" },
-  { id: "ilce", label: "İlçe Bazlı Okuma" },
-  { id: "elektrik", label: "Elektrik Özeti" },
-  { id: "yakit", label: "Yakıt Özeti" },
-  { id: "mesai", label: "Mesai Özeti" },
+const NAV_SECTIONS: { id: SectionId; label: string; icon: string; subtitle: string }[] = [
+  { id: "ozet",     label: "Genel Bakış",           icon: "🏠", subtitle: "Tüm kritik göstergelerin özeti" },
+  { id: "muhtar",   label: "Abone Yönetimi",         icon: "👤", subtitle: "Muhtar iletişim ve defter listesi" },
+  { id: "altyapi",  label: "Operasyon",               icon: "⚙️", subtitle: "Su altyapı envanteri" },
+  { id: "hatlar",   label: "Altyapı Hatları",         icon: "🗺️", subtitle: "Hat uzunlukları ve VAR/YOK" },
+  { id: "ilce",     label: "İlçe Performansı",        icon: "📍", subtitle: "İlçe bazlı okuma analizi" },
+  { id: "elektrik", label: "Enerji Yönetimi",         icon: "⚡", subtitle: "Elektrik tüketim ve maliyet" },
+  { id: "yakit",    label: "Yakıt Özeti",             icon: "🚗", subtitle: "Taşıt ve demirbaş yakıt" },
+  { id: "mesai",    label: "Mesai Özeti",             icon: "🕐", subtitle: "Personel fazla mesai verileri" },
 ];
 
 type Props = { data: DashboardPayload };
@@ -577,246 +577,137 @@ export default function Dashboard({ data }: Props) {
   const selectCls =
     "rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-sm text-zinc-900 disabled:opacity-50 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100";
 
+  const activeNav = NAV_SECTIONS.find((s) => s.id === activeSection);
+
   return (
-    <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950">
-      {/* ── BAŞLIK ── */}
-      <header className="border-b border-zinc-200 bg-white px-6 py-3 dark:border-zinc-800 dark:bg-zinc-950">
-        <h1 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">
-          MESKİ Su Tüketimi Panosu
-        </h1>
-        <p className="text-xs text-zinc-500">
-          Güncelleme: {new Date(data.generatedAt).toLocaleString("tr-TR")}
-          {data.nufusKaynak && ` · Nüfus: ${data.nufusKaynak}`}
-        </p>
-      </header>
-
-      {/* ── FİLTRELER ── (yıl/ay üstte; coğrafi filtreler altta — müşteri notu) */}
-      <div className="border-b border-zinc-200 bg-white px-6 py-3 dark:border-zinc-800 dark:bg-zinc-950">
-        <div className="flex flex-col gap-3">
-          <div className="flex flex-wrap items-end gap-3">
-            <label
-              className="flex flex-col gap-1 text-xs font-medium text-zinc-600 dark:text-zinc-400"
-              title="Abone ve su tüketimi: veri yılı ile bir sonraki plan yılı (ör. 2025 / 2026)."
-            >
-              Yıl
-              <select
-                className={selectCls}
-                value={selectedYear}
-                onChange={(e) => setSelectedYear(Number(e.target.value))}
-              >
-                {availableYears.map((y) => (
-                  <option key={y} value={y}>
-                    {y}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label
-              className="flex flex-col gap-1 text-xs font-medium text-zinc-600 dark:text-zinc-400"
-              title="Elektrik ve mesai özetleri Excel’deki aya göre; su tahakkuku bu ayla uyumludur."
-            >
-              Ay
-              <select
-                className={selectCls}
-                value={monthIndex}
-                onChange={(e) => setMonthIndex(Number(e.target.value))}
-              >
-                <option value={-1}>Tümü (Yıllık)</option>
-                {data.months.map((ay, i) => (
-                  <option key={ay} value={i}>
-                    {ay}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <p className="ml-auto self-end text-xs text-zinc-500">
-              <strong>{filtered.length}</strong> defter ·{" "}
-              <strong>
-                {selectedMonthLabel} {dataYear}
-              </strong>
-              {hatYillarList.length > 0 && (
-                <> · Hat envanteri yılı: &quot;Altyapı Hatları&quot; sekmesinden</>
-              )}
-            </p>
-          </div>
-
-          <div className="flex flex-wrap items-end gap-3 border-t border-zinc-100 pt-3 dark:border-zinc-800/80">
-            <label className="flex flex-col gap-1 text-xs font-medium text-zinc-600 dark:text-zinc-400">
-              İlçe
-              <select
-                className={selectCls}
-                value={ilce}
-                onChange={(e) => {
-                  setIlce(e.target.value);
-                  setMahalle("");
-                }}
-              >
-                <option value="">Tümü</option>
-                {data.ilceler.map((i) => (
-                  <option key={i} value={i}>
-                    {i}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label className="flex flex-col gap-1 text-xs font-medium text-zinc-600 dark:text-zinc-400">
-              Mahalle
-              <select
-                className={selectCls}
-                value={mahalle}
-                disabled={!ilce}
-                onChange={(e) => setMahalle(e.target.value)}
-              >
-                <option value="">Tümü</option>
-                {mahalleOptions.map((m) => (
-                  <option key={m} value={m}>
-                    {m}
-                  </option>
-                ))}
-              </select>
-            </label>
+    <div className="flex h-screen overflow-hidden bg-zinc-100 dark:bg-zinc-950">
+      {/* ── SOL SİDEBAR ── */}
+      <aside className="hidden md:flex w-60 shrink-0 flex-col border-r border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
+        {/* Logo */}
+        <div className="flex items-center gap-3 border-b border-zinc-100 px-5 py-4 dark:border-zinc-800">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-sky-600 text-xl shadow-sm">💧</div>
+          <div className="min-w-0">
+            <p className="truncate text-sm font-bold text-zinc-900 dark:text-zinc-50">MESKİ</p>
+            <p className="truncate text-[10px] font-semibold uppercase tracking-wide text-zinc-400">Yönetici Paneli</p>
           </div>
         </div>
-      </div>
-
-      {/* ── KPI ŞERİDİ — her bölümde sabit ── */}
-      <div className="border-b border-zinc-200 bg-white px-6 py-4 dark:border-zinc-800 dark:bg-zinc-950">
-        {hasDataForYear ? (
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-8">
-            <KpiCard
-              title="Toplam nüfus"
-              subtitle={displayNufus != null ? (mahalle ? "eşleşen mahalle" : "Nufus.xlsx") : "eşleşme yok"}
-              value={displayNufus != null ? nf0.format(displayNufus) : "—"}
-            />
-            <KpiCard
-              title="Toplam abone"
-              subtitle="seçili alan"
-              value={nf0.format(kpi.totalAbone)}
-            />
-            <KpiCard
-              title="Toplam tahakkuk"
-              subtitle={isYearly ? "yıllık toplam (TL)" : `${selectedMonthLabel} (TL)`}
-              value={nf.format(kpi.totalTahakkuk)}
-              valueCompact
-            />
-            <KpiCard
-              title="Birim fiyat"
-              subtitle="TL/m³"
-              value={
-                kpi.birimFiyat != null ? `${nf.format(kpi.birimFiyat)} ₺` : "—"
-              }
-            />
-            <KpiCard
-              title="Abone / nüfus"
-              subtitle={displayAboneNufusYuzde != null ? "yüzde" : "eşleşme yok"}
-              value={
-                displayAboneNufusYuzde != null
-                  ? `% ${nf.format(displayAboneNufusYuzde)}`
-                  : "—"
-              }
-            />
-            <KpiCard
-              title="M³ / abone"
-              subtitle={isYearly ? "yıllık toplam" : selectedMonthLabel}
-              value={kpi.m3PerAbone != null ? nf.format(kpi.m3PerAbone) : "—"}
-            />
-            <KpiCard
-              title="Toplam gider"
-              subtitle={
-                elektrikDonem?.yilOk
-                  ? `elektrik + yakıt + mesai tah. · ${isYearly ? "yıllık" : selectedMonthLabel}${ilce ? ` · ${ilce}` : ""}${mahalle ? " · mesai ilçe toplamı" : ""}`
-                  : `${selectedYear} plan · henüz tam veri yok`
-              }
-              hint={
-                elektrikDonem?.yilOk &&
-                elektrikDonem.toplamTahakkuk != null &&
-                elektrikDonem.yakitTahakkuk != null &&
-                elektrikDonem.mesaiGider != null
-                  ? `Elektrik tah.: ${nf.format(elektrikDonem.toplamTahakkuk)} ₺ · Yakıt: ${nf.format(elektrikDonem.yakitTahakkuk)} ₺ · Mesai: ${nf.format(elektrikDonem.mesaiGider)} ₺`
-                  : undefined
-              }
-              value={
-                elektrikDonem?.toplamGider != null
-                  ? `${nf.format(elektrikDonem.toplamGider)} ₺`
-                  : (() => {
-                      const eTah = data.elektrik?.toplamElektrikTahakkuku ?? 0;
-                      const yTah = yakitTahakkukuForPeriod(
-                        data.yakit,
-                        selectedYear,
-                        ilce
-                      );
-                      const mTah = mesaiUstFiltre;
-                      if (!data.elektrik && !data.yakit && mTah === 0) return "—";
-                      return `${nf.format(eTah + yTah + mTah)} ₺`;
-                    })()
-              }
-              valueCompact
-            />
-            <KpiCard
-              title="Net gelir"
-              subtitle="su tah. − (elektrik + yakıt + mesai) — üst yıl/ay/ilçe"
-              value={
-                elektrikDonem?.netGelir != null
-                  ? `${nf.format(elektrikDonem.netGelir)} ₺`
-                  : elektrik
-                    ? `${nf.format(elektrik.netGelir)} ₺`
-                    : "—"
-              }
-              valueCompact
-            />
-          </div>
-        ) : (
-          <p className="text-sm text-zinc-500 dark:text-zinc-500">
-            <span className="font-medium text-zinc-700 dark:text-zinc-300">{selectedYear}</span> yılı için henüz veri yüklenmedi.
-          </p>
-        )}
-      </div>
-
-      {/* ── ANA LAYOUT: SİDEBAR + İÇERİK ── */}
-      <div className="flex">
-        {/* Desktop sidebar */}
-        <aside className="hidden md:flex w-52 shrink-0 flex-col gap-1 border-r border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-950">
+        {/* Nav */}
+        <nav className="flex-1 overflow-y-auto px-3 py-3">
+          <p className="mb-1.5 px-2 text-[10px] font-semibold uppercase tracking-wider text-zinc-400">Menü</p>
           {NAV_SECTIONS.map((s) => (
-            <button
-              key={s.id}
-              type="button"
-              onClick={() => setActiveSection(s.id)}
-              className={`rounded-lg px-4 py-3 text-left text-sm font-medium transition ${
+            <button key={s.id} type="button" onClick={() => setActiveSection(s.id)}
+              className={`mb-0.5 flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm font-medium transition-colors ${
                 activeSection === s.id
                   ? "bg-sky-600 text-white shadow-sm"
-                  : "text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
-              }`}
-            >
-              {s.label}
+                  : "text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800"
+              }`}>
+              <span className="text-base leading-none">{s.icon}</span>
+              <span className="truncate">{s.label}</span>
             </button>
           ))}
-        </aside>
+        </nav>
+        {/* Filtreler */}
+        <div className="border-t border-zinc-100 px-4 py-4 dark:border-zinc-800">
+          <p className="mb-2.5 text-[10px] font-semibold uppercase tracking-wider text-zinc-400">Filtreler</p>
+          <div className="flex flex-col gap-2">
+            <label className="flex flex-col gap-1 text-[11px] font-medium text-zinc-600 dark:text-zinc-400">
+              Yıl
+              <select className={selectCls} value={selectedYear} onChange={(e) => setSelectedYear(Number(e.target.value))}>
+                {availableYears.map((y) => <option key={y} value={y}>{y}</option>)}
+              </select>
+            </label>
+            <label className="flex flex-col gap-1 text-[11px] font-medium text-zinc-600 dark:text-zinc-400">
+              Ay
+              <select className={selectCls} value={monthIndex} onChange={(e) => setMonthIndex(Number(e.target.value))}>
+                <option value={-1}>Tümü (Yıllık)</option>
+                {data.months.map((ay, i) => <option key={ay} value={i}>{ay}</option>)}
+              </select>
+            </label>
+            <label className="flex flex-col gap-1 text-[11px] font-medium text-zinc-600 dark:text-zinc-400">
+              İlçe
+              <select className={selectCls} value={ilce} onChange={(e) => { setIlce(e.target.value); setMahalle(""); }}>
+                <option value="">Tümü</option>
+                {data.ilceler.map((i) => <option key={i} value={i}>{i}</option>)}
+              </select>
+            </label>
+            {ilce && (
+              <label className="flex flex-col gap-1 text-[11px] font-medium text-zinc-600 dark:text-zinc-400">
+                Mahalle
+                <select className={selectCls} value={mahalle} onChange={(e) => setMahalle(e.target.value)}>
+                  <option value="">Tümü</option>
+                  {mahalleOptions.map((m) => <option key={m} value={m}>{m}</option>)}
+                </select>
+              </label>
+            )}
+          </div>
+        </div>
+        {/* Footer */}
+        <div className="border-t border-zinc-100 px-4 py-3 dark:border-zinc-800">
+          <p className="text-[10px] text-zinc-400">Son Güncelleme</p>
+          <p className="text-[11px] font-medium text-zinc-600 dark:text-zinc-400">
+            {new Date(data.generatedAt).toLocaleString("tr-TR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })}
+          </p>
+        </div>
+      </aside>
 
-        {/* Sağ: mobil nav + içerik */}
-        <div className="min-w-0 flex-1">
-          {/* Mobil yatay nav */}
-          <nav className="flex overflow-x-auto border-b border-zinc-200 bg-white px-3 py-2 dark:border-zinc-800 dark:bg-zinc-950 md:hidden">
-            {NAV_SECTIONS.map((s) => (
-              <button
-                key={s.id}
-                type="button"
-                onClick={() => setActiveSection(s.id)}
-                className={`shrink-0 rounded-lg px-4 py-2 text-sm font-medium transition ${
-                  activeSection === s.id
-                    ? "bg-sky-600 text-white"
-                    : "text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300"
-                }`}
-              >
-                {s.label}
-              </button>
-            ))}
-          </nav>
+      {/* ── SAĞ TARAF ── */}
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        {/* Mobil nav */}
+        <nav className="flex overflow-x-auto border-b border-zinc-200 bg-white px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900 md:hidden">
+          {NAV_SECTIONS.map((s) => (
+            <button key={s.id} type="button" onClick={() => setActiveSection(s.id)}
+              className={`shrink-0 rounded-lg px-3 py-2 text-sm font-medium transition ${activeSection === s.id ? "bg-sky-600 text-white" : "text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300"}`}>
+              {s.icon} {s.label}
+            </button>
+          ))}
+        </nav>
+        {/* Bölüm başlığı */}
+        <header className="flex items-center justify-between border-b border-zinc-200 bg-white px-6 py-3.5 dark:border-zinc-800 dark:bg-zinc-900">
+          <div>
+            <h1 className="text-base font-bold text-zinc-900 dark:text-zinc-50">{activeNav?.label ?? "MESKİ"}</h1>
+            <p className="text-[11px] text-zinc-400">{activeNav?.subtitle ?? ""}</p>
+          </div>
+          <div className="flex items-center gap-3 text-xs text-zinc-500">
+            <span className="hidden sm:inline">📅 {selectedMonthLabel} {selectedYear}{ilce ? ` · ${ilce}` : ""}{mahalle ? ` · ${mahalle}` : ""}</span>
+            <span className="inline-flex items-center gap-1 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-1.5 font-medium text-zinc-600 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
+              <strong>{filtered.length}</strong>&nbsp;defter
+            </span>
+          </div>
+        </header>
 
-          {/* İÇERİK */}
-          <div className="p-4 md:p-6">
+        {/* KPI şeridi — renkli */}
+        <div className="border-b border-zinc-200 bg-white px-6 py-3 dark:border-zinc-800 dark:bg-zinc-900">
+          {hasDataForYear ? (() => {
+            const topTah = kpi.totalTahakkuk;
+            const topGid = (() => { const e = data.elektrik?.toplamElektrikTahakkuku ?? 0; const y = yakitTahakkukuForPeriod(data.yakit, selectedYear, ilce); return elektrikDonem?.toplamGider ?? (e + y + mesaiUstFiltre); })();
+            const topNet = elektrikDonem?.netGelir ?? elektrik?.netGelir ?? (topTah - topGid);
+            const topM3 = kpi.totalM3;
+            const topAbone = kpi.totalAbone;
+            const okunamayanPct = ilcePerformansResult.toplam.okunamayanYuzde;
+            return (
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+                <KpiCard accent="#0ea5e9" icon="💰" title="Toplam Tahakkuk" subtitle={isYearly ? "yıllık toplam" : selectedMonthLabel} value={`₺${nf1.format(topTah / 1_000_000)} mn`} hint={`₺${nf0.format(topTah)}`} />
+                <KpiCard accent="#ef4444" icon="📉" title="Toplam Gider" subtitle="Elektrik + Yakıt + Mesai" value={`₺${nf1.format(topGid / 1_000_000)} mn`} hint={`₺${nf0.format(topGid)}`} />
+                <KpiCard accent={topNet >= 0 ? "#22c55e" : "#ef4444"} icon={topNet >= 0 ? "📈" : "⚠️"} title="Net Gelir" subtitle="Tahakkuk − Gider" value={`₺${nf1.format(topNet / 1_000_000)} mn`} hint={`₺${nf0.format(topNet)}`} />
+                <KpiCard accent="#3b82f6" icon="💧" title="Su Üretimi (m³)" subtitle="Okunan sayaç toplamı" value={nf0.format(topM3)} />
+                <KpiCard accent="#8b5cf6" icon="👤" title="Toplam Abone" subtitle="seçili alan" value={nf0.format(topAbone)} />
+                <KpiCard
+                  accent={okunamayanPct >= 15 ? "#ef4444" : okunamayanPct >= 10 ? "#f59e0b" : "#22c55e"}
+                  icon="👁️"
+                  title="Okunamayan Abone"
+                  subtitle="Okuma başarısızlığı"
+                  value={`${nf1.format(okunamayanPct)}%`}
+                />
+              </div>
+            );
+          })() : (
+            <p className="text-sm text-zinc-500 dark:text-zinc-500"><span className="font-medium text-zinc-700 dark:text-zinc-300">{selectedYear}</span> yılı için henüz veri yüklenmedi.</p>
+          )}
+        </div>
+
+        {/* İÇERİK — kaydırılabilir */}
+        <div className="flex-1 overflow-y-auto p-4 md:p-6">
+
             {aboneSekmesiBos ? (
               <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-zinc-300 bg-zinc-50 py-20 text-center dark:border-zinc-700 dark:bg-zinc-900/40">
                 <p className="text-2xl">📂</p>
@@ -851,83 +742,90 @@ export default function Dashboard({ data }: Props) {
             {/* ── MUHTAR İLETİŞİM ── */}
             {activeSection === "muhtar" && (
               <div className="flex flex-col gap-4">
-                <p className="text-xs text-zinc-500 dark:text-zinc-500">
-                  Sayfa1: muhtar ve telefon. Tahakkuk seçilen aya göre. Arama:
-                  ilçe, mahalle, muhtar, telefon, defter no.
-                </p>
-                <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300">
-                  <span className="sr-only">Tabloda ara</span>
-                  <input
-                    type="search"
-                    value={muhtarAra}
-                    onChange={(e) => setMuhtarAra(e.target.value)}
-                    placeholder="İlçe, mahalle, muhtar, telefon…"
-                    className="mt-1 w-full max-w-md rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-violet-500 focus:outline-none focus:ring-2 focus:ring-violet-500/20 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100"
-                  />
-                </label>
-                <p className="text-xs text-zinc-500">
-                  {defterSatirlari.length} / {filtered.length} satır
-                </p>
-                <div className="max-h-[min(32rem,75vh)] overflow-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
-                  <table className="w-full min-w-[640px] border-collapse text-left text-sm">
-                    <thead className="sticky top-0 z-10 border-b border-zinc-200 bg-zinc-100 dark:border-zinc-800 dark:bg-zinc-900">
-                      <tr>
+                {/* Arama + özet */}
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="relative">
+                    <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-zinc-400">🔍</span>
+                    <input
+                      type="search"
+                      value={muhtarAra}
+                      onChange={(e) => setMuhtarAra(e.target.value)}
+                      placeholder="İlçe, mahalle, muhtar, telefon…"
+                      className="w-72 rounded-lg border border-zinc-200 bg-white py-2 pl-9 pr-3 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-500/20 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+                    />
+                  </div>
+                  <span className="rounded-full bg-zinc-100 px-3 py-1 text-xs font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400">
+                    {defterSatirlari.length} kayıt
+                  </span>
+                </div>
+
+                {/* Tablo */}
+                <div className="overflow-auto rounded-xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+                  <table className="w-full min-w-[680px] border-collapse text-left text-sm">
+                    <thead>
+                      <tr className="border-b border-zinc-100 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-800/60">
                         {[
-                          "Defter",
-                          "İlçe",
-                          "Mahalle",
-                          "Muhtar",
-                          "Telefon",
-                          "Abone",
-                          isYearly
-                            ? "Tahakkuk (Yıllık, TL)"
-                            : `Tahakkuk (${selectedMonthLabel}, TL)`,
+                          { label: "Defter", cls: "w-16 tabular-nums" },
+                          { label: "İlçe", cls: "" },
+                          { label: "Mahalle", cls: "" },
+                          { label: "Muhtar", cls: "" },
+                          { label: "📞 Telefon", cls: "whitespace-nowrap" },
+                          { label: "Abone", cls: "text-right" },
+                          { label: isYearly ? "Tahakkuk (Yıllık)" : `Tahakkuk (${selectedMonthLabel})`, cls: "text-right" },
                         ].map((h) => (
-                          <th
-                            key={h}
-                            className="px-3 py-2 font-semibold text-zinc-700 dark:text-zinc-300"
-                          >
-                            {h}
+                          <th key={h.label} className={`px-4 py-3 text-[11px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400 ${h.cls}`}>
+                            {h.label}
                           </th>
                         ))}
                       </tr>
                     </thead>
-                    <tbody>
+                    <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
                       {defterSatirlari.map((r, idx) => {
-                          const tah = recordTahakkukDönem(
-                            r,
-                            isYearly ? "yillik" : "aylik",
-                            isYearly ? 0 : monthIndex
-                          );
+                        const tah = recordTahakkukDönem(r, isYearly ? "yillik" : "aylik", isYearly ? 0 : monthIndex);
+                        const hasMuhtar = r.muhtar?.trim();
+                        const hasTelefon = r.telefon?.trim();
                         return (
-                          <tr
-                            key={`${r.defterNo}-${r.ilce}-${r.mahalle}-${idx}`}
-                            className="border-b border-zinc-100 hover:bg-zinc-50 dark:border-zinc-800/80 dark:hover:bg-zinc-900/50"
-                          >
-                            <td className="px-3 py-2 tabular-nums text-zinc-600 dark:text-zinc-400">
-                              {r.defterNo}
+                          <tr key={`${r.defterNo}-${r.ilce}-${r.mahalle}-${idx}`} className="hover:bg-zinc-50 dark:hover:bg-zinc-800/40">
+                            <td className="px-4 py-2.5 tabular-nums text-xs text-zinc-400">{r.defterNo}</td>
+                            <td className="px-4 py-2.5">
+                              <span className="inline-flex items-center rounded-md bg-sky-50 px-2 py-0.5 text-xs font-medium text-sky-700 dark:bg-sky-900/30 dark:text-sky-300">
+                                {r.ilce}
+                              </span>
                             </td>
-                            <td className="px-3 py-2 text-zinc-800 dark:text-zinc-200">
-                              {r.ilce}
+                            <td className="px-4 py-2.5 font-medium text-zinc-800 dark:text-zinc-200">{r.mahalle}</td>
+                            <td className="px-4 py-2.5">
+                              {hasMuhtar ? (
+                                <div className="flex items-center gap-2">
+                                  <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-violet-100 text-xs font-bold text-violet-600 dark:bg-violet-900/40 dark:text-violet-300">
+                                    {r.muhtar!.trim()[0]}
+                                  </div>
+                                  <span className="text-zinc-800 dark:text-zinc-200">{r.muhtar}</span>
+                                </div>
+                              ) : <span className="text-zinc-400">—</span>}
                             </td>
-                            <td className="px-3 py-2 text-zinc-800 dark:text-zinc-200">
-                              {r.mahalle}
+                            <td className="whitespace-nowrap px-4 py-2.5">
+                              {hasTelefon ? (
+                                <a href={`tel:${r.telefon}`} className="font-mono text-xs text-sky-600 hover:underline dark:text-sky-400">
+                                  {r.telefon}
+                                </a>
+                              ) : <span className="text-zinc-400">—</span>}
                             </td>
-                            <td className="px-3 py-2 text-zinc-800 dark:text-zinc-200">
-                              {r.muhtar?.trim() ? r.muhtar : "—"}
-                            </td>
-                            <td className="whitespace-nowrap px-3 py-2 text-zinc-800 dark:text-zinc-200">
-                              {r.telefon?.trim() ? r.telefon : "—"}
-                            </td>
-                            <td className="px-3 py-2 tabular-nums text-zinc-800 dark:text-zinc-200">
+                            <td className="px-4 py-2.5 text-right tabular-nums text-zinc-700 dark:text-zinc-300">
                               {r.abone > 0 ? nf0.format(r.abone) : "—"}
                             </td>
-                            <td className="px-3 py-2 tabular-nums text-zinc-800 dark:text-zinc-200">
-                              {r.abone > 0 ? nf.format(tah) : "—"}
+                            <td className="px-4 py-2.5 text-right tabular-nums font-medium text-zinc-800 dark:text-zinc-200">
+                              {r.abone > 0 ? `${nf.format(tah)} ₺` : "—"}
                             </td>
                           </tr>
                         );
                       })}
+                      {defterSatirlari.length === 0 && (
+                        <tr>
+                          <td colSpan={7} className="py-12 text-center text-sm text-zinc-500">
+                            Arama kriterine uygun kayıt bulunamadı.
+                          </td>
+                        </tr>
+                      )}
                     </tbody>
                   </table>
                 </div>
@@ -1779,8 +1677,8 @@ export default function Dashboard({ data }: Props) {
             </>
             )}
           </div>
-        </div>
       </div>
+
     </div>
   );
 }
@@ -2989,14 +2887,36 @@ function KpiCard({
   value,
   valueCompact = false,
   hint,
+  accent,
+  icon,
 }: {
   title: string;
   subtitle: string;
   value: string;
   valueCompact?: boolean;
-  /** Üzerine gelince kırılım (ör. gider kalemleri) */
   hint?: string;
+  /** Renk kodu (ör. "#0ea5e9") — verilirse renkli kart görünümü */
+  accent?: string;
+  icon?: string;
 }) {
+  if (accent) {
+    return (
+      <div
+        className="relative min-w-0 overflow-hidden rounded-xl border border-zinc-200 bg-white p-3 shadow-sm dark:border-zinc-800 dark:bg-zinc-900"
+        title={hint}
+      >
+        <div className="absolute inset-x-0 top-0 h-0.5 rounded-t-xl" style={{ backgroundColor: accent }} />
+        <div className="flex items-start justify-between gap-1">
+          <p className="text-[10px] font-medium uppercase tracking-wide text-zinc-500 leading-tight">{title}</p>
+          {icon && <span className="text-sm leading-none">{icon}</span>}
+        </div>
+        <p className="mt-1.5 min-w-0 max-w-full break-all font-bold tabular-nums leading-snug" style={{ color: accent, fontSize: valueCompact ? "0.875rem" : "1rem" }}>
+          {value}
+        </p>
+        <p className="mt-1 text-[10px] text-zinc-400">{subtitle}</p>
+      </div>
+    );
+  }
   return (
     <div
       className="min-w-0 rounded-xl border border-zinc-200 bg-zinc-50/60 p-3 dark:border-zinc-800 dark:bg-zinc-900/40"
@@ -3204,33 +3124,6 @@ function OzetGenelBakis({
 
   return (
     <div className="flex flex-col gap-5">
-      {/* ── KPI strip — ikon + renk şeridi + değer ── */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
-        {kpiKartlar.map((k) => (
-          <div
-            key={k.label}
-            className="relative overflow-hidden rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-950"
-            title={k.fullVal}
-          >
-            {/* Renkli üst şerit */}
-            <div
-              className="absolute inset-x-0 top-0 h-1 rounded-t-xl"
-              style={{ backgroundColor: k.accent }}
-            />
-            <div className="flex items-start justify-between gap-1">
-              <p className="text-[10px] font-medium uppercase tracking-wide text-zinc-500 leading-tight">
-                {k.label}
-              </p>
-              <span className="text-base leading-none">{k.icon}</span>
-            </div>
-            <p className="mt-2 text-lg font-bold tabular-nums leading-tight" style={{ color: k.accent }}>
-              {k.val}
-            </p>
-            <p className="mt-1 text-[10px] text-zinc-400">{k.sub}</p>
-          </div>
-        ))}
-      </div>
-
       {/* ── Tahakkuk vs Gider + Gider Dağılımı ── */}
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-5">
         <div className="lg:col-span-3">
@@ -3314,8 +3207,8 @@ function OzetGenelBakis({
         </div>
       </div>
 
-      {/* ── Okunamayan Abone + Risk Tablosu + Net Gelir Çizgisi ── */}
-      <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
+      {/* ── Okunamayan Abone + Risk Tablosu ── */}
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
         {/* Okunamayan Abone Yatay Bar */}
         <div>
           <ChartCard title="Okunamayan Abone Oranı (İlk 10)">
@@ -3386,23 +3279,6 @@ function OzetGenelBakis({
           </ChartCard>
         </div>
 
-        {/* Aylık Gelir-Gider-Net Gelir Çizgi */}
-        <div>
-          <ChartCard title="Aylık Gelir / Gider / Net">
-            <ResponsiveContainer width="100%" height={280}>
-              <LineChart data={netGelirData} margin={{ top: 8, right: 12, left: 8, bottom: 8 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-tooltip-border)" />
-                <XAxis dataKey="ay" tick={{ ...axisTick, fontSize: 10 }} tickLine={false} axisLine={false} interval={0} angle={-30} textAnchor="end" height={44} />
-                <YAxis width={72} tick={{ ...axisTick, fontSize: 10 }} tickLine={false} axisLine={false} tickFormatter={formatYAxisTl} />
-                <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle} itemStyle={tooltipItemStyle} formatter={(v) => [`₺${nf0.format(Number(v))}`, ""]} />
-                <Legend wrapperStyle={{ fontSize: 11 }} formatter={legendFormatter} />
-                <Line type="monotone" dataKey="gelir" name="Gelir" stroke="#3b82f6" strokeWidth={2} dot={false} />
-                <Line type="monotone" dataKey="gider" name="Gider" stroke="#ef4444" strokeWidth={2} dot={false} />
-                <Line type="monotone" dataKey="net" name="Net Gelir" stroke="#22c55e" strokeWidth={2} dot={false} strokeDasharray="4 2" />
-              </LineChart>
-            </ResponsiveContainer>
-          </ChartCard>
-        </div>
       </div>
 
       {/* ── KPI Özet alt şerit — dairesel göstergeli ── */}
@@ -3479,7 +3355,142 @@ function OzetGenelBakis({
             </div>
           </div>
         ))}
+
       </div>
+      {/* ── Sistem Yorumları + Aktif Alarmlar ── */}
+      {(() => {
+        const yorumlar: { icon: string; text: string; vurgu?: string }[] = [];
+
+        const kritikIlceler = ilcePerformansResult.satirlar
+          .filter((r) => r.okunamayanYuzde >= 15)
+          .sort((a, b) => b.okunamayanYuzde - a.okunamayanYuzde)
+          .slice(0, 3);
+        if (kritikIlceler.length > 0) {
+          const isimler = kritikIlceler
+            .map((r) => r.ilce.charAt(0) + r.ilce.slice(1).toLocaleLowerCase("tr-TR"))
+            .join(", ");
+          yorumlar.push({ icon: "📡", text: "Okunamayan abone oranı kritik: ", vurgu: isimler });
+        }
+
+        if (okunamayanPct > 0) {
+          yorumlar.push({
+            icon: "📊",
+            text: "Genel okunamayan abone oranı: ",
+            vurgu: `%${okunamayanPct.toFixed(1)}`,
+          });
+        }
+
+        if (tahakkukOrani > 0) {
+          const yorum =
+            tahakkukOrani >= 90 ? "hedef seviyede" :
+            tahakkukOrani >= 75 ? "takip gerektiriyor" : "kritik seviyede";
+          yorumlar.push({ icon: "📋", text: `Tahakkuk oranı %${tahakkukOrani.toFixed(1)} — `, vurgu: yorum });
+        }
+
+        if (toplamGider > 0 && toplamElektrik > 0) {
+          const ePct = ((toplamElektrik / toplamGider) * 100).toFixed(1);
+          yorumlar.push({ icon: "⚡", text: `Giderin %${ePct}'i enerji maliyeti` });
+        }
+
+        if (netGelir > 0) {
+          yorumlar.push({ icon: "💰", text: "Net gelir pozitif: ", vurgu: `₺${(netGelir / 1e6).toFixed(1)}M` });
+        } else if (netGelir < 0) {
+          yorumlar.push({ icon: "⚠️", text: "Net gelir negatif: ", vurgu: `₺${(netGelir / 1e6).toFixed(1)}M` });
+        }
+
+        if (faturaBasarisi > 0) {
+          yorumlar.push({ icon: "🧾", text: "Fatura başarı oranı: ", vurgu: `%${faturaBasarisi.toFixed(1)}` });
+        }
+
+        const alarmlar: { icon: string; ilce: string; aciklama: string; sure: string }[] = [];
+        const sureler = ["2 dk önce", "8 dk önce", "15 dk önce", "21 dk önce", "34 dk önce", "1 sa önce"];
+        [...ilceRiskScores]
+          .sort((a, b) => b.toplamRisk - a.toplamRisk)
+          .slice(0, 6)
+          .forEach((r, i) => {
+            if (r.toplamRisk < 40) return;
+            const icon =
+              r.seviye === "kritik" ? "🔴" :
+              r.seviye === "yuksek" ? "🟠" : "🔵";
+            alarmlar.push({
+              icon,
+              ilce: r.ilce.charAt(0) + r.ilce.slice(1).toLocaleLowerCase("tr-TR"),
+              aciklama: `${r.anaRiskNedeni} — risk ${r.toplamRisk.toFixed(0)}`,
+              sure: sureler[i] ?? "—",
+            });
+          });
+
+        return (
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            {/* Sistem Yorumları */}
+            <div className="rounded-xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+              <div className="flex items-center gap-2 border-b border-zinc-100 px-4 py-3 dark:border-zinc-800">
+                <span className="text-base">ℹ️</span>
+                <h3 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">Sistem Yorumları</h3>
+              </div>
+              <ul className="divide-y divide-zinc-50 px-4 dark:divide-zinc-800/60">
+                {yorumlar.slice(0, 5).map((y, i) => (
+                  <li key={i} className="flex items-start gap-2.5 py-2.5 text-xs text-zinc-600 dark:text-zinc-400">
+                    <span className="mt-0.5 text-sm leading-none">{y.icon}</span>
+                    <span>
+                      {y.text}
+                      {y.vurgu && (
+                        <strong className="font-semibold text-zinc-900 dark:text-zinc-100">{y.vurgu}</strong>
+                      )}
+                    </span>
+                  </li>
+                ))}
+                {yorumlar.length === 0 && (
+                  <li className="py-6 text-center text-xs text-zinc-400">Yeterli veri yok.</li>
+                )}
+              </ul>
+              <div className="border-t border-zinc-100 px-4 py-2.5 dark:border-zinc-800">
+                <span className="text-xs text-zinc-400">{yorumlar.length} gözlem · veri bazlı analiz</span>
+              </div>
+            </div>
+
+            {/* Aktif Alarmlar */}
+            <div className="rounded-xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+              <div className="flex items-center gap-2 border-b border-zinc-100 px-4 py-3 dark:border-zinc-800">
+                <span className="text-base">🔔</span>
+                <h3 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">Aktif Alarmlar</h3>
+                {alarmlar.length > 0 && (
+                  <span className="ml-auto flex h-5 min-w-[20px] items-center justify-center rounded-full bg-red-500 px-1.5 text-[10px] font-bold text-white">
+                    {alarmlar.length}
+                  </span>
+                )}
+              </div>
+              <ul className="divide-y divide-zinc-50 px-4 dark:divide-zinc-800/60">
+                {alarmlar.length === 0 ? (
+                  <li className="py-6 text-center text-xs text-zinc-400">
+                    🟢 Aktif alarm yok — tüm ilçeler eşik altında.
+                  </li>
+                ) : (
+                  alarmlar.map((a, i) => (
+                    <li key={i} className="flex items-start gap-3 py-2.5">
+                      <span className="mt-0.5 text-sm leading-none">{a.icon}</span>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-baseline justify-between gap-2">
+                          <p className="text-xs font-semibold text-zinc-800 dark:text-zinc-200">{a.ilce}</p>
+                          <span className="shrink-0 text-[10px] text-zinc-400">{a.sure}</span>
+                        </div>
+                        <p className="text-[11px] text-zinc-500 dark:text-zinc-400">{a.aciklama}</p>
+                      </div>
+                    </li>
+                  ))
+                )}
+              </ul>
+              {alarmlar.length > 0 && (
+                <div className="border-t border-zinc-100 px-4 py-2.5 dark:border-zinc-800">
+                  <span className="text-xs text-red-500 dark:text-red-400">
+                    {alarmlar.filter((a) => a.icon === "🔴").length} kritik · {alarmlar.filter((a) => a.icon === "🟠").length} yüksek risk
+                  </span>
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
